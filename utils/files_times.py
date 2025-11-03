@@ -72,6 +72,9 @@ def generate_schedule_time_next_day(total_videos, videos_per_day = 1, daily_time
 
         # Calculate the time for the current video
         hour = daily_times[daily_video_index]
+        # if hour is str
+        if isinstance(hour, str):
+            hour = int(hour.split(":")[0])
         time_offset = timedelta(days=day, hours=hour - current_time.hour, minutes=-current_time.minute,
                                 seconds=-current_time.second, microseconds=-current_time.microsecond)
         timestamp = current_time + time_offset

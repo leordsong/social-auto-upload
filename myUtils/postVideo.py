@@ -35,7 +35,7 @@ def post_video_DouYin(title,files,tags,account_file,category=TencentZoneTypes.LI
     account_file = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
     files = [Path(BASE_DIR / "videoFile" / file) for file in files]
     if enableTimer:
-        publish_datetimes = generate_schedule_time_next_day(len(files), videos_per_day, daily_times,start_days)
+        publish_datetimes = generate_schedule_time_next_day(len(files), videos_per_day, daily_times,False, start_days)
     else:
         publish_datetimes = [0 for i in range(len(files))]
     for index, file in enumerate(files):
