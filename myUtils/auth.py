@@ -2,7 +2,10 @@ import asyncio
 import configparser
 import os
 
-from playwright.async_api import async_playwright
+try:
+    from patchright.async_api import async_playwright
+except ImportError:
+    from playwright.async_api import async_playwright
 from xhs import XhsClient
 
 from conf import BASE_DIR
@@ -11,6 +14,7 @@ from utils.log import tencent_logger, kuaishou_logger, douyin_logger
 from utils.runtime_config import get_local_chrome_headless
 from pathlib import Path
 from uploader.xhs_uploader.main import sign_local
+from uploader.tk_uploader.main_chrome import cookie_auth as cookie_auth_tiktok
 
 
 async def cookie_auth_douyin(account_file):
@@ -121,9 +125,9 @@ async def check_cookie(type, file_path):
         case 5:
             from uploader.bilibili_uploader.main import cookie_auth as bilibili_cookie_auth
             return await bilibili_cookie_auth(Path(BASE_DIR / "cookiesFile" / file_path))
-        # TikTok（暂不支持cookie验证，返回True）
+        # TikTok
         case 6:
-            return True
+            return await cookie_auth_tiktok(Path(BASE_DIR / "cookiesFile" / file_path))
         # 百家号（暂不支持cookie验证，返回True）
         case 7:
             return True

@@ -56,8 +56,8 @@
                 <el-tooltip content="B站账号" placement="top">
                   <el-tag size="small" type="primary">{{ platformStats.bilibili }}</el-tag>
                 </el-tooltip>
-                <el-tooltip content="TikTok账号" placement="top">
-                  <el-tag size="small">{{ platformStats.tiktok }}</el-tag>
+                <el-tooltip content="TikTok 账号" placement="top">
+                  <el-tag size="small" type="primary">{{ platformStats.tiktok }}</el-tag>
                 </el-tooltip>
                 <el-tooltip content="百家号账号" placement="top">
                   <el-tag size="small" type="success">{{ platformStats.baijiahao }}</el-tag>

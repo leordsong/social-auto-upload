@@ -776,7 +776,7 @@ const getPlatformTagType = (platform) => {
     '视频号': 'warning',
     '小红书': 'info',
     'B站': 'primary',
-    'TikTok': '',
+    'TikTok': 'primary',
     '百家号': 'success'
   }
   return typeMap[platform] || 'info'

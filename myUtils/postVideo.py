@@ -12,7 +12,6 @@ from uploader.ks_uploader.main import KSVideo
 from uploader.tencent_uploader.main import TencentVideo
 from uploader.xiaohongshu_uploader.main import XiaoHongShuVideo
 from uploader.baijiahao_uploader.main import BaiJiaHaoVideo
-from uploader.tk_uploader.main import TiktokVideo
 from uploader.bilibili_uploader.main import BilibiliVideo, BILIBILI_PUBLISH_STRATEGY_IMMEDIATE, BILIBILI_PUBLISH_STRATEGY_SCHEDULED
 from utils.constant import TencentZoneTypes
 from utils.files_times import generate_schedule_time_next_day
@@ -396,22 +395,50 @@ def post_video_baijiahao(title,files,tags,account_file,category=TencentZoneTypes
             asyncio.run(app.main(), debug=False)
 
 
-def post_video_tiktok(title,files,tags,account_file,category=TencentZoneTypes.LIFESTYLE.value,enableTimer=False,videos_per_day = 1, daily_times=None,start_days = 0):
+def post_video_tiktok(
+    title,
+    files,
+    tags,
+    account_file,
+    category=TencentZoneTypes.LIFESTYLE.value,
+    enableTimer=False,
+    videos_per_day=1,
+    daily_times=None,
+    start_days=0,
+    thumbnail_path="",
+    description="",
+    is_aigc=True,
+    productLink="",
+    productTitle="",
+):
     """TikTok视频发布"""
-    # 生成文件的完整路径
-    account_file = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
-    files = [Path(BASE_DIR / "videoFile" / file) for file in files]
+    account_files = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
+    video_files = [Path(BASE_DIR / "videoFile" / file) for file in files]
+    cover_file = Path(BASE_DIR / "videoFile" / thumbnail_path) if thumbnail_path else None
     if enableTimer:
-        publish_datetimes = generate_schedule_time_next_day(len(files), videos_per_day, daily_times,start_days)
+        publish_datetimes = generate_schedule_time_next_day(
+            len(video_files), videos_per_day, daily_times, start_days
+        )
     else:
-        publish_datetimes = [0 for i in range(len(files))]
-    for index, file in enumerate(files):
-        for cookie in account_file:
-            print(f"文件路径{str(file)}")
-            print(f"视频文件名：{file}")
+        publish_datetimes = [0 for _ in video_files]
+
+    for index, file in enumerate(video_files):
+        for cookie in account_files:
+            print(f"TikTok视频文件名：{file}")
             print(f"标题：{title}")
             print(f"Hashtag：{tags}")
-            app = TiktokVideo(title, str(file), tags, publish_datetimes[index], cookie, category=category)
+            app = TiktokVideo(
+                title,
+                str(file),
+                tags,
+                publish_datetimes[index],
+                cookie,
+                thumbnail_path=cover_file,
+                description=description,
+                is_aigc=is_aigc,
+                product_link=productLink,
+                product_title=productTitle,
+            )
             asyncio.run(app.main(), debug=False)
 
 

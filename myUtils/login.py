@@ -1,7 +1,12 @@
 import asyncio
+import base64
+import re
 import sqlite3
 
-from playwright.async_api import async_playwright
+try:
+    from patchright.async_api import async_playwright
+except ImportError:
+    from playwright.async_api import async_playwright
 
 from myUtils.auth import check_cookie
 from utils.base_social_media import set_init_script
@@ -9,6 +14,7 @@ from utils.runtime_config import get_login_browser_headless
 import uuid
 from pathlib import Path
 from conf import BASE_DIR, LOCAL_CHROME_PATH
+from uploader.tk_uploader.main_chrome import TIKTOK_UPLOAD_URL, capture_ready_tiktok_qr
 
 # 统一获取浏览器启动配置（防风控+引入本地浏览器）
 def get_browser_options(douyin=False):
@@ -530,39 +536,53 @@ async def baijiahao_cookie_gen(id, status_queue, account_id=None, existing_file_
 
 
 async def tiktok_cookie_gen(id, status_queue, account_id=None, existing_file_path=None):
-    """TikTok登录（复用抖音登录逻辑）"""
-    url_changed_event = asyncio.Event()
-
-    async def on_url_change():
-        if page.url != original_url:
-            url_changed_event.set()
-
+    """打开 TikTok 扫码登录，并保存为当前系统的 type-6 账号。"""
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(**get_browser_options())
+        options = get_browser_options()
+        # 登录必须保持可见；上传任务是否无头不影响这里。
+        options["headless"] = False
+        browser = await playwright.chromium.launch(**options)
         context = await browser.new_context()
         context = await set_init_script(context)
         page = await context.new_page()
-        page.on("framenavigated", lambda frame: asyncio.create_task(on_url_change()))
+        await page.goto(TIKTOK_UPLOAD_URL, wait_until="domcontentloaded", timeout=60_000)
 
-        original_url = "https://www.tiktok.com/"
-        await page.goto(original_url)
-        status_queue.put("200")
+        qr_sent = False
+        authenticated = False
+        for _ in range(200):
+            if await page.locator(
+                'input[type="file"][accept*="video"], [data-e2e="select_video_container"]'
+            ).count():
+                authenticated = True
+                break
 
-        try:
-            await asyncio.wait_for(url_changed_event.wait(), timeout=300)
-            print("监听页面跳转成功")
-        except asyncio.TimeoutError:
+            if not qr_sent:
+                qr_tab = page.get_by_text(
+                    re.compile(r"(使用二维码|二维码登录|Use QR code|Log in with QR)", re.I)
+                ).first
+                if await qr_tab.count() and await qr_tab.is_visible():
+                    await qr_tab.click()
+                    await page.wait_for_timeout(500)
+
+                png = await capture_ready_tiktok_qr(page)
+                if png:
+                    status_queue.put(
+                        f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}"
+                    )
+                    qr_sent = True
+
+            if "/login" not in page.url and "/tiktokstudio/upload" not in page.url:
+                await page.goto(TIKTOK_UPLOAD_URL, wait_until="domcontentloaded")
+            await asyncio.sleep(1)
+
+        if not authenticated:
             status_queue.put("500")
-            print("监听页面跳转超时")
-            await page.close()
             await context.close()
             await browser.close()
             return None
 
         cookie_path, file_name = resolve_cookie_target(existing_file_path)
         await context.storage_state(path=cookie_path)
-
-        await page.close()
         await context.close()
         await browser.close()
 

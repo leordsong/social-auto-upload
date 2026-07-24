@@ -889,6 +889,13 @@
               maxlength="200"
               class="douyinProduct-link-input"
             />
+            <el-alert
+              v-if="tab.selectedPlatform === 6"
+              title="TikTok 商品链接字段已接入任务；因网页定位尚未提供，当前版本会记录告警但不会自动挂载商品。"
+              type="warning"
+              :closable="false"
+              show-icon
+            />
           </div>
 
           <!-- 平台特殊功能：声明类型（抖音） -->
@@ -1037,6 +1044,12 @@
               maxlength="2000"
               show-word-limit
               class="description-input"
+            />
+            <el-checkbox
+              v-if="tab.selectedPlatform === 6"
+              v-model="tab.isAigc"
+              label="标记为 AI 生成的内容"
+              class="aigc-checkbox"
             />
           </div>
 
@@ -1471,10 +1484,10 @@ const PLATFORM_CONFIG = {
   6: { // TikTok
     name: 'TikTok',
     features: {
-      cover: 'none',
-      description: false,
+      cover: 'single',
+      description: true,
       channelsDraft: false,
-      douyinProduct: false,
+      douyinProduct: true,
       douyinDeclaration: false,
       declareOriginal: false,        // 不支持原创声明
       bilibiliZone: false,
@@ -1548,6 +1561,7 @@ const defaultTabInit = {
   publishStatus: null, // 发布状态，包含message和type
   publishing: false, // 发布状态，用于控制按钮loading效果
   isDraft: false, // 是否保存为草稿，仅视频号平台可见
+  isAigc: true, // TikTok AI 生成内容声明
   isOriginal: false, // 是否标记为原创，仅视频号、小红书平台可见
   bilibiliTid: 218, // B站分区ID，默认218（动物圈）
   bilibiliAiDeclaration: false, // B站创作声明：含AI生成内容
@@ -2550,6 +2564,7 @@ const confirmPublish = async (tab) => {
     type: tab.selectedPlatform,
     title: tab.title,
     desc: tab.desc?.trim() || '',
+    description: tab.desc?.trim() || '',
     tags: tab.selectedTopics, // 不带#号的话题列表
     fileList: tab.fileList.map(file => file.path), // 只发送文件路径
     accountList: tab.selectedAccounts.map(accountId => {
@@ -2574,6 +2589,7 @@ const confirmPublish = async (tab) => {
       isDraft: tab.isDraft
     } : null,
     isDraft: tab.isDraft,
+    isAigc: tab.isAigc,
     // 快手作者声明参数
     kuaishouDeclaration: tab.kuaishou_declaration || '内容为AI生成',
     // 小红书声明参数

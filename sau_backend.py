@@ -684,8 +684,10 @@ def postVideo():
     productLink = data.get('productLink', '')
     productTitle = data.get('productTitle', '')
     desc = data.get('desc', '')
+    description = data.get('description', desc)
     thumbnail_portrait = data.get('thumbnailPortrait', '')
     is_draft = data.get('isDraft', False)  # 新增参数：是否保存为草稿
+    is_aigc = data.get('isAigc', True)
     tencent_declare_original = data.get('tencentDeclareOriginal', data.get('declareOriginal', False))
     tencent_declaration = data.get('tencentDeclaration')
 
@@ -761,8 +763,11 @@ def postVideo():
                           cover_path=bilibili_cover, collection=collection,
                           ai_declaration=bilibili_ai_declaration)
             case 6:
-                post_video_tiktok(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days)
+                post_video_tiktok(
+                    title, file_list, tags, account_list, category, enableTimer,
+                    videos_per_day, daily_times, start_days, thumbnail_path,
+                    description, is_aigc, productLink, productTitle
+                )
             case 7:
                 post_video_baijiahao(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
                           start_days)
@@ -842,7 +847,9 @@ def postVideoBatch():
         productLink = data.get('productLink', '')
         productTitle = data.get('productTitle', '')
         desc = data.get('desc', '')
+        description = data.get('description', desc)
         is_draft = data.get('isDraft', False)
+        is_aigc = data.get('isAigc', True)
         tencent_declare_original = data.get('tencentDeclareOriginal', data.get('declareOriginal', False))
         tencent_declaration = data.get('tencentDeclaration')
         declaration_info = data.get('declaration_info', None)# 新增参数：添加声明
@@ -899,8 +906,11 @@ def postVideoBatch():
                           cover_path=bilibili_cover, collection=collection,
                           ai_declaration=bilibili_ai_declaration)
             case 6:
-                post_video_tiktok(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days)
+                post_video_tiktok(
+                    title, file_list, tags, account_list, category, enableTimer,
+                    videos_per_day, daily_times, start_days, thumbnail_path,
+                    description, is_aigc, productLink, productTitle
+                )
             case 7:
                 post_video_baijiahao(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
                           start_days)
@@ -1336,7 +1346,10 @@ def publish_to_platform(platform_id, title, files, coverPath, tags, accounts, de
                 enableTimer=False,
                 videos_per_day=1,
                 daily_times=[10],
-                start_days=0
+                start_days=0,
+                thumbnail_path=coverPath.get('square', '') if isinstance(coverPath, dict) else coverPath,
+                description=desc,
+                is_aigc=tiktok_config.get('isAigc', True),
             )
             
         case 7:  # 百家号
