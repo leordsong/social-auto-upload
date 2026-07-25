@@ -4,8 +4,13 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from uploader.tk_uploader.main_chrome import (
+    ADVANCED_SETTINGS,
+    AIGC_CONTAINER,
     CALENDAR_PICKER,
     CAPTION_EDITOR,
+    COVER_EDITOR,
+    COVER_ENTRY,
+    COVER_INPUT,
     POST_BUTTON,
     QR_CODE_CANVAS,
     QR_LOADING_MASK,
@@ -17,6 +22,7 @@ from uploader.tk_uploader.main_chrome import (
     TiktokVideo,
     capture_ready_tiktok_qr,
 )
+from myUtils.postVideo import post_video_tiktok
 from utils.files_times import generate_schedule_time_next_day
 
 
@@ -31,6 +37,16 @@ class TiktokUploaderTests(unittest.TestCase):
         self.assertIn('accept*="video"', VIDEO_INPUT)
         self.assertIn("contenteditable", CAPTION_EDITOR)
         self.assertEqual(POST_BUTTON, 'button[data-e2e="post_video_button"]')
+        self.assertIn(".cover-container", COVER_ENTRY)
+        self.assertIn(".cover-editor-container", COVER_EDITOR)
+        self.assertIn('aria-label="Upload cover image"', COVER_INPUT)
+        self.assertEqual(AIGC_CONTAINER, '[data-e2e="aigc_container"]')
+        self.assertEqual(
+            ADVANCED_SETTINGS,
+            '[data-e2e="advanced_settings_container"]',
+        )
+        for selector in (COVER_ENTRY, COVER_EDITOR, COVER_INPUT):
+            self.assertNotIn("jsx-", selector)
 
     def test_schedule_selectors_use_stable_input_attributes(self):
         self.assertIn('value="schedule"', SCHEDULE_RADIO)
@@ -150,6 +166,186 @@ class TiktokUploaderTests(unittest.TestCase):
         )
         self.assertEqual(video.build_caption(), "标题 #cat #dance #旅行")
 
+    def test_video_input_uploads_selected_file(self):
+        video = TiktokVideo("标题", "demo.mp4", [], 0, "cookie.json")
+        file_input = MagicMock()
+        file_input.wait_for = AsyncMock()
+        file_input.set_input_files = AsyncMock()
+        query = MagicMock()
+        query.first = file_input
+        video.locator_base = MagicMock()
+        video.locator_base.locator.return_value = query
+
+        asyncio.run(video.upload_video_file())
+
+        video.locator_base.locator.assert_called_once_with(VIDEO_INPUT)
+        file_input.wait_for.assert_awaited_once_with(
+            state="attached",
+            timeout=60_000,
+        )
+        file_input.set_input_files.assert_awaited_once_with("demo.mp4")
+
+    def test_caption_editor_receives_combined_caption(self):
+        video = TiktokVideo(
+            "标题",
+            "demo.mp4",
+            ["猫"],
+            0,
+            "cookie.json",
+            description="描述",
+        )
+        editor = MagicMock()
+        editor.wait_for = AsyncMock()
+        editor.click = AsyncMock()
+        query = MagicMock()
+        query.first = editor
+        video.locator_base = MagicMock()
+        video.locator_base.locator.return_value = query
+        page = MagicMock()
+        page.keyboard.press = AsyncMock()
+        page.keyboard.insert_text = AsyncMock()
+
+        asyncio.run(video.add_title_tags(page))
+
+        page.keyboard.press.assert_any_await("Control+A")
+        page.keyboard.press.assert_any_await("Backspace")
+        page.keyboard.insert_text.assert_awaited_once_with("标题\n描述 #猫")
+
+    def test_cover_upload_uses_editor_input_and_button_content_fallback(self):
+        video = TiktokVideo(
+            "标题",
+            "demo.mp4",
+            [],
+            0,
+            "cookie.json",
+            thumbnail_path="cover.png",
+        )
+        cover = MagicMock()
+        cover.wait_for = AsyncMock()
+        cover.click = AsyncMock()
+        cover_query = MagicMock()
+        cover_query.first = cover
+
+        cover_input = MagicMock()
+        cover_input.wait_for = AsyncMock()
+        cover_input.set_input_files = AsyncMock()
+        cover_input_query = MagicMock()
+        cover_input_query.first = cover_input
+
+        missing_role_button = MagicMock()
+        missing_role_button.count = AsyncMock(return_value=0)
+        role_query = MagicMock()
+        role_query.first = missing_role_button
+
+        save_button = MagicMock()
+        save_button.wait_for = AsyncMock()
+        save_button.click = AsyncMock()
+        save_query = MagicMock()
+        save_query.first = save_button
+
+        editor = MagicMock()
+        editor.wait_for = AsyncMock()
+        editor.get_by_role.return_value = role_query
+        editor.locator.side_effect = (
+            lambda selector: cover_input_query
+            if selector == COVER_INPUT
+            else save_query
+        )
+        editor_query = MagicMock()
+        editor_query.first = editor
+
+        video.locator_base = MagicMock()
+        video.locator_base.locator.side_effect = (
+            lambda selector: cover_query
+            if selector == COVER_ENTRY
+            else editor_query
+        )
+        page = MagicMock()
+
+        asyncio.run(video.upload_thumbnails(page))
+
+        cover.click.assert_awaited_once()
+        cover_input.set_input_files.assert_awaited_once_with("cover.png")
+        fallback_selector = editor.locator.call_args_list[-1].args[0]
+        self.assertIn("div.Button__content", fallback_selector)
+        save_button.click.assert_awaited_once()
+        editor.wait_for.assert_awaited_with(state="hidden", timeout=30_000)
+
+    def test_aigc_expands_advanced_settings_and_enables_switch(self):
+        video = TiktokVideo(
+            "标题",
+            "demo.mp4",
+            [],
+            0,
+            "cookie.json",
+            is_aigc=True,
+        )
+        switch = MagicMock()
+        switch.get_attribute = AsyncMock(return_value="false")
+        switch.click = AsyncMock()
+        switch_query = MagicMock()
+        switch_query.first = switch
+
+        container = MagicMock()
+        container.count = AsyncMock(return_value=1)
+        container.is_visible = AsyncMock(return_value=False)
+        container.wait_for = AsyncMock()
+        container.locator.return_value = switch_query
+        container_query = MagicMock()
+        container_query.first = container
+
+        more = MagicMock()
+        more.count = AsyncMock(return_value=1)
+        more.is_visible = AsyncMock(return_value=True)
+        more.click = AsyncMock()
+        more_query = MagicMock()
+        more_query.first = more
+
+        video.locator_base = MagicMock()
+        video.locator_base.locator.side_effect = (
+            lambda selector: container_query
+            if selector == AIGC_CONTAINER
+            else more_query
+        )
+
+        asyncio.run(video.set_aigc_content())
+
+        more.click.assert_awaited_once()
+        switch.click.assert_awaited_once_with(force=True)
+
+    def test_publish_uses_stable_data_e2e_button(self):
+        video = TiktokVideo("标题", "demo.mp4", [], 0, "cookie.json")
+        button = MagicMock()
+        button.wait_for = AsyncMock()
+        button.click = AsyncMock()
+        query = MagicMock()
+        query.first = button
+        video.locator_base = MagicMock()
+        video.locator_base.locator.return_value = query
+        page = MagicMock()
+        page.wait_for_url = AsyncMock()
+
+        asyncio.run(video.click_publish(page))
+
+        video.locator_base.locator.assert_called_once_with(POST_BUTTON)
+        button.click.assert_awaited_once()
+
+    def test_upload_status_waits_for_enabled_post_button(self):
+        video = TiktokVideo("标题", "demo.mp4", [], 0, "cookie.json")
+        button = MagicMock()
+        button.count = AsyncMock(return_value=1)
+        button.get_attribute = AsyncMock(side_effect=["false", "false"])
+        button.is_visible = AsyncMock(return_value=True)
+        button.is_enabled = AsyncMock(return_value=True)
+        query = MagicMock()
+        query.first = button
+        video.locator_base = MagicMock()
+        video.locator_base.locator.return_value = query
+
+        asyncio.run(video.detect_upload_status(timeout=1))
+
+        video.locator_base.locator.assert_called_once_with(POST_BUTTON)
+
     def test_legacy_thumbnail_positional_argument_is_preserved(self):
         video = TiktokVideo(
             "标题", "demo.mp4", [], 0, "cookie.json", "cover.png"
@@ -170,6 +366,33 @@ class TiktokUploaderTests(unittest.TestCase):
             result = asyncio.run(video.add_product_link())
         self.assertFalse(result)
         warning.assert_called_once()
+
+    def test_post_video_helper_forwards_aigc_product_and_test_mode(self):
+        app = MagicMock()
+        app.main = AsyncMock()
+        with patch(
+            "myUtils.postVideo.TiktokVideo",
+            return_value=app,
+        ) as uploader:
+            post_video_tiktok(
+                title="标题",
+                files=["demo.mp4"],
+                tags=["猫"],
+                account_file=["cookie.json"],
+                description="描述",
+                is_aigc=True,
+                productLink="https://shop.example/item",
+                productTitle="商品",
+                test_mode=True,
+            )
+
+        kwargs = uploader.call_args.kwargs
+        self.assertEqual(kwargs["description"], "描述")
+        self.assertTrue(kwargs["is_aigc"])
+        self.assertEqual(kwargs["product_link"], "https://shop.example/item")
+        self.assertEqual(kwargs["product_title"], "商品")
+        self.assertTrue(kwargs["test_mode"])
+        app.main.assert_awaited_once()
 
 
 if __name__ == "__main__":

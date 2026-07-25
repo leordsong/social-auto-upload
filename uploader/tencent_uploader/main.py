@@ -467,6 +467,9 @@ class TencentBaseUploader(BaseVideoUploader):
             raise RuntimeError(f"cookie文件不存在，请先完成视频号登录: {self.account_file}")
         if not await cookie_auth(self.account_file):
             raise RuntimeError(f"cookie文件已失效，请先完成视频号登录: {self.account_file}")
+        if getattr(self, "test_mode", False):
+            self.publish_strategy = TENCENT_PUBLISH_STRATEGY_IMMEDIATE
+            self.publish_date = 0
         if self.publish_strategy not in {TENCENT_PUBLISH_STRATEGY_IMMEDIATE, TENCENT_PUBLISH_STRATEGY_SCHEDULED}:
             raise ValueError(f"不支持的发布策略: {self.publish_strategy}")
 
@@ -774,6 +777,18 @@ class TencentBaseUploader(BaseVideoUploader):
 
     async def submit_publish(self, page: Page) -> None:
         tencent_logger.info(_msg("🚀", "小人正在点击发布按钮"))
+        if getattr(self, "is_draft", False):
+            draft_button = page.locator(
+                'button:has-text("保存草稿"), button:has-text("Save draft")'
+            ).first
+            if not await draft_button.count() or not await draft_button.is_visible():
+                raise RuntimeError("未找到“保存草稿/Save draft”按钮")
+            tencent_logger.info(_msg("🧪", "测试或草稿模式：点击保存草稿"))
+            await draft_button.click()
+            await page.wait_for_timeout(1500)
+            tencent_logger.success(_msg("🥳", "视频草稿保存成功"))
+            return
+
         max_retries = 3  # 最大重试次数
         retry_count = 0
         while retry_count < max_retries:
@@ -837,6 +852,7 @@ class TencentVideo(TencentBaseUploader):
         collection: str | None = None,  # 合集名称
         declaration: str | None = None,  # 视频标注（如"含AI生成内容"）
         screenshot_manager: ScreenshotManager | None = None,  # 截图管理器（异常诊断）
+        test_mode: bool = False,
     ):
         super().__init__(
             publish_date=publish_date,
@@ -851,7 +867,8 @@ class TencentVideo(TencentBaseUploader):
         self.tags = tags or []
         self.category = category
         self.declare_original = bool(category) if declare_original is None else bool(declare_original)
-        self.is_draft = is_draft
+        self.test_mode = bool(test_mode)
+        self.is_draft = bool(is_draft or self.test_mode)
         self.desc = desc or ""
         self.thumbnail_path = thumbnail_path
         self.thumbnail_landscape_path = thumbnail_landscape_path

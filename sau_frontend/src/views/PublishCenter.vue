@@ -104,7 +104,7 @@
                       <div v-else class="cover-empty">未选择竖封面</div>
                       <div class="cover-platform-hint">
                         <el-icon><InfoFilled /></el-icon>
-                        <span>适用：小红书 / 视频号 / 抖音 / 快手</span>
+                        <span>适用：视频号 / 抖音 / 快手</span>
                         <el-tag size="small" type="warning" style="margin-left: 8px;">快手≤5MB</el-tag>
                       </div>
                     </div>
@@ -142,6 +142,26 @@
               <div class="form-item">
                 <label>描述 / 简介</label>
                 <el-input v-model="tab.desc" type="textarea" :rows="3" placeholder="请输入视频描述或简介" maxlength="2000" show-word-limit />
+              </div>
+
+              <!-- 测试模式 -->
+              <div class="form-item">
+                <label>测试模式</label>
+                <el-switch
+                  v-model="tab.testMode"
+                  active-text="测试模式"
+                  inactive-text="正式发布"
+                  :disabled="tab.publishing"
+                  @change="onTestModeChange(tab)"
+                />
+                <el-alert
+                  v-if="tab.testMode"
+                  title="不会正式发布：抖音、B站和视频号保存草稿；TikTok 放弃；快手取消。小红书暂不支持。"
+                  type="warning"
+                  :closable="false"
+                  show-icon
+                  style="margin-top: 10px;"
+                />
               </div>
             </el-card>
 
@@ -268,21 +288,6 @@
               <template #header>
                 <span class="card-title">⚙️ 平台差异化设置</span>
               </template>
-
-              <!-- 📦 公共设置（所有平台共用） -->
-              <div class="platform-specific-settings common-settings">
-                <h4 class="platform-title" style="color: #409EFF;">📦 公共设置</h4>
-
-                <!-- 合集功能 -->
-                <div class="form-item">
-                  <label>合集名称</label>
-                  <el-input v-model="tab.platformConfig.common.collection" placeholder="输入合集名称" clearable>
-                    <template #prefix>
-                      <el-icon><Folder /></el-icon>
-                    </template>
-                  </el-input>
-                </div>
-              </div>
 
               <!-- 各平台独有设置 -->
               <!-- B站独有设置 -->
@@ -550,10 +555,33 @@
                     </el-button>
                   </div>
                 </div>
+
+                <div class="form-item">
+                  <el-checkbox v-model="tab.platformConfig.tiktok.isAigc">
+                    标记为 AI 生成的内容
+                  </el-checkbox>
+                </div>
+
+                <div class="form-item">
+                  <label>商品名称</label>
+                  <el-input v-model="tab.platformConfig.tiktok.productTitle" placeholder="请输入商品名称（可选）" clearable />
+                </div>
+
+                <div class="form-item">
+                  <label>商品链接</label>
+                  <el-input v-model="tab.platformConfig.tiktok.productLink" placeholder="请输入商品链接（可选）" clearable />
+                  <el-alert
+                    title="商品字段会传入任务；因 TikTok 网页定位尚未提供，当前会记录告警但不会自动挂载商品。"
+                    type="warning"
+                    :closable="false"
+                    show-icon
+                    style="margin-top: 10px;"
+                  />
+                </div>
               </div>
 
               <!-- 百家号独有设置 -->
-              <div v-if="tab.selectedPlatforms.includes(7)" class="platform-specific-settings">
+              <div v-if="SHOW_BAIJIAHAO && tab.selectedPlatforms.includes(7)" class="platform-specific-settings">
                 <h4 class="platform-title" style="color: #E74C3C;">百家号</h4>
                 
                 <!-- 标签/话题 -->
@@ -594,7 +622,7 @@
                 :disabled="!canUnifiedPublish(tab)"
                 style="width: 100%; height: 50px; font-size: 18px;"
               >
-                🚀 一键发布到 {{ tab.selectedPlatforms.length }} 个平台
+                {{ tab.testMode ? '🧪 测试' : '🚀 一键发布到' }} {{ tab.selectedPlatforms.length }} 个平台
               </el-button>
             </div>
 
@@ -840,7 +868,7 @@
           <!-- 平台选择 -->
           <div class="platform-section">
             <h3>平台</h3>
-            <el-radio-group v-model="tab.selectedPlatform" class="platform-radios">
+            <el-radio-group v-model="tab.selectedPlatform" class="platform-radios" @change="onPlatformChange(tab)">
               <el-radio 
                 v-for="platform in platforms" 
                 :key="platform.key"
@@ -996,29 +1024,6 @@
             />
           </div>
 
-          <!-- 合集选择 -->
-          <div v-if="getPlatformConfig(tab.selectedPlatform).features.collection" class="collection-section">
-            <h3>合集</h3>
-            <el-select
-              v-model="tab.collection"
-              placeholder="请选择或搜索合集（支持模糊匹配）"
-              style="width: 100%"
-              filterable
-              allow-create
-              default-first-option
-            >
-              <el-option
-                v-for="item in COLLECTION_OPTIONS"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
-              />
-            </el-select>
-            <div style="margin-top: 5px; color: #909399; font-size: 12px;">
-              可输入关键字搜索合集，如输入"大学"可匹配"大学篇"
-            </div>
-          </div>
-
           <!-- 标题输入 -->
           <div class="title-section">
             <h3>标题</h3>
@@ -1124,6 +1129,34 @@
             </template>
           </el-dialog>
 
+          <!-- 测试模式 -->
+          <div class="schedule-section">
+            <h3>测试模式</h3>
+            <el-switch
+              v-model="tab.testMode"
+              active-text="测试模式"
+              inactive-text="正式发布"
+              :disabled="tab.selectedPlatform === 1 || tab.publishing"
+              @change="onTestModeChange(tab)"
+            />
+            <el-alert
+              v-if="tab.selectedPlatform === 1"
+              title="小红书暂不支持测试模式"
+              type="info"
+              :closable="false"
+              show-icon
+              style="margin-top: 10px;"
+            />
+            <el-alert
+              v-else-if="tab.testMode"
+              :title="`测试完成后将执行：${getTestModeAction(tab.selectedPlatform)}`"
+              type="warning"
+              :closable="false"
+              show-icon
+              style="margin-top: 10px;"
+            />
+          </div>
+
           <!-- 定时发布 -->
           <div class="schedule-section">
             <h3>定时发布</h3>
@@ -1132,6 +1165,7 @@
                 v-model="tab.scheduleEnabled"
                 active-text="定时发布"
                 inactive-text="立即发布"
+                :disabled="tab.testMode"
               />
               <div v-if="tab.scheduleEnabled" class="schedule-settings">
                 <div class="schedule-item">
@@ -1185,7 +1219,7 @@
               @click="confirmPublish(tab)"
               :loading="tab.publishing || false"
             >
-              {{ tab.publishing ? '发布中...' : '发布' }}
+              {{ tab.publishing ? (tab.testMode ? '测试中...' : '发布中...') : (tab.testMode ? '开始测试' : '发布') }}
             </el-button>
           </div>
           </div>  <!-- 关闭 v-else 普通发布Tab容器 -->
@@ -1364,6 +1398,7 @@ import { useAccountStore } from '@/stores/account'
 import { useAppStore } from '@/stores/app'
 import { materialApi } from '@/api/material'
 import { http } from '@/utils/request'
+import { SHOW_XIAOHONGSHU, SHOW_BAIJIAHAO, isPlatformVisible } from '@/config/features'
 import { countryOptions as regionsCountryOptions, declarationCascaderProps as regionsCascaderProps } from '@/utils/regions.zh'
 
 const UPLOAD_TARGETS = {
@@ -1423,8 +1458,7 @@ const PLATFORM_CONFIG = {
       douyinDeclaration: false,     // 不支持抖音声明类型
       xiaohongshuDeclaration: true, // 支持小红书声明类型（下拉列表）
       declareOriginal: true,          // 支持原创声明
-      bilibiliZone: false,    // 不支持B站分区
-      collection: true         // 支持合集
+      bilibiliZone: false     // 不支持B站分区
     }
   },
   2: { // 视频号
@@ -1436,8 +1470,7 @@ const PLATFORM_CONFIG = {
       douyinProduct: false,
       douyinDeclaration: false,
       declareOriginal: true,          // 支持原创声明
-      bilibiliZone: false,
-      collection: true               // 支持合集
+      bilibiliZone: false
     }
   },
   3: { // 抖音
@@ -1449,8 +1482,7 @@ const PLATFORM_CONFIG = {
       douyinProduct: true,          // 支持商品
       douyinDeclaration: true,      // 支持声明类型
       declareOriginal: false,        // 不支持原创声明
-      bilibiliZone: false,
-      collection: true              // 支持合集
+      bilibiliZone: false
     }
   },
   4: { // 快手
@@ -1463,8 +1495,7 @@ const PLATFORM_CONFIG = {
       douyinDeclaration: false,      // 不支持抖音声明类型（单选框）
       kuaishouDeclaration: true, // 快手作者声明（下拉列表）
       declareOriginal: false,        // 不支持原创声明
-      bilibiliZone: false,
-      collection: true              // 支持合集
+      bilibiliZone: false
     }
   },
   5: { // B站
@@ -1477,8 +1508,7 @@ const PLATFORM_CONFIG = {
       douyinDeclaration: false,
       declareOriginal: true,         // 支持原创声明（声明原创 = 自制 + 禁止转载）
       bilibiliZone: true,            // 支持B站分区
-      bilibiliDeclaration: true,     // 支持B站创作声明（含AI生成内容）
-      collection: true               // 支持合集
+      bilibiliDeclaration: true      // 支持B站创作声明（含AI生成内容）
     }
   },
   6: { // TikTok
@@ -1490,8 +1520,7 @@ const PLATFORM_CONFIG = {
       douyinProduct: true,
       douyinDeclaration: false,
       declareOriginal: false,        // 不支持原创声明
-      bilibiliZone: false,
-      collection: true              // 支持合集
+      bilibiliZone: false
     }
   },
   7: { // 百家号
@@ -1503,8 +1532,7 @@ const PLATFORM_CONFIG = {
       douyinProduct: false,
       douyinDeclaration: false,
       declareOriginal: false,        // 不支持原创声明
-      bilibiliZone: false,
-      collection: true              // 支持合集
+      bilibiliZone: false
     }
   }
 }
@@ -1512,11 +1540,6 @@ const PLATFORM_CONFIG = {
 // B站分区
 const BILIBILI_ZONES = [
   { value: 218, label: '动物' }
-]
-
-// 合集选项
-const COLLECTION_OPTIONS = [
-  { value: '大学篇', label: '大学篇' }
 ]
 
 // 获取平台配置的辅助函数
@@ -1533,7 +1556,9 @@ const platforms = [
   { key: 5, name: 'B站' },
   { key: 7, name: '百家号' },
   { key: 6, name: 'TikTok' },
-]
+].filter(platform => isPlatformVisible(platform.name))
+
+const AVAILABLE_PLATFORM_IDS = new Set(platforms.map(platform => platform.key))
 
 const defaultTabInit = {
   name: 'tab1',
@@ -1544,7 +1569,7 @@ const defaultTabInit = {
   coverPortrait: null,
   coverSquare: null,
   selectedAccounts: [], // 选中的账号ID列表
-  selectedPlatform: 1, // 选中的平台（单选）
+  selectedPlatform: SHOW_XIAOHONGSHU ? 1 : 3, // 选中的平台（单选）
   title: '',
   desc: '',
   douyinProductLink: '', // 商品链接
@@ -1555,6 +1580,7 @@ const defaultTabInit = {
   declaration_network_subtype: '', // 内容取材网络的下级默认选项
   selectedTopics: [], // 话题列表（不带#号）
   scheduleEnabled: false, // 定时发布开关
+  testMode: false, // 测试模式：保存草稿或放弃，不正式发布
   videosPerDay: 1, // 每天发布视频数量
   dailyTimes: ['10:00'], // 每天发布时间点列表
   startDays: 0, // 从今天开始计算的发布天数，0表示明天，1表示后天
@@ -1567,7 +1593,6 @@ const defaultTabInit = {
   bilibiliAiDeclaration: false, // B站创作声明：含AI生成内容
   kuaishou_declaration: '内容为AI生成', // 快手作者声明类型，默认"内容为AI生成"
   xiaohongshu_declaration: '', // 小红书声明类型
-  collection: '大学篇', // 合集名称，默认"大学篇"
   coverSingle: null, // B站封面文件
 }
 
@@ -1582,6 +1607,7 @@ const unifiedPublishInit = {
   coverSingle: null, // 统一封面（各平台可能不同）
   title: '', // 标题
   desc: '', // 描述/简介
+  testMode: false, // 测试模式：保存草稿或放弃，不正式发布
 
   // 平台选择
   selectedPlatforms: [], // 选中的平台ID列表 [1,3,5]
@@ -1604,11 +1630,6 @@ const unifiedPublishInit = {
 
   // 平台差异化设置（每个平台独立的标签）
   platformConfig: {
-    // 公共设置
-    common: {
-      collection: '', // 合集名称（所有平台共用）
-    },
-
     // 小红书独有
     xiaohongshu: {
       tags: [], // 标签/话题（独立）
@@ -1644,6 +1665,9 @@ const unifiedPublishInit = {
     // TikTok独有
     tiktok: {
       tags: [], // 标签/话题（独立）
+      isAigc: true, // AI 生成内容声明
+      productTitle: '', // 商品名称（等待网页定位）
+      productLink: '', // 商品链接（等待网页定位）
     },
     // 百家号独有
     baijiahao: {
@@ -1708,7 +1732,8 @@ const availableAccounts = computed(() => {
     6: 'TikTok',
     7: '百家号'
   }
-  const currentPlatform = currentTab.value ? platformMap[currentTab.value.selectedPlatform] : null
+  const selectedPlatform = currentTab.value?.selectedPlatform
+  const currentPlatform = AVAILABLE_PLATFORM_IDS.has(selectedPlatform) ? platformMap[selectedPlatform] : null
   return currentPlatform ? accountStore.accounts.filter(acc => acc.platform === currentPlatform) : []
 })
 
@@ -1995,7 +2020,9 @@ const searchAccounts = (tab, query) => {
 
     // 在所有账号中按用户名搜索
     const matchedAccounts = accountStore.accounts.filter(acc =>
-      acc.name && acc.name.toLowerCase().includes(keyword)
+      acc.name &&
+      acc.name.toLowerCase().includes(keyword) &&
+      isPlatformVisible(acc.platform)
     )
 
     // 按用户名分组
@@ -2037,7 +2064,7 @@ const autoDetectPlatforms = (tab) => {
     const account = accountStore.accounts.find(acc => acc.id === userId)
     if (account) {
       const platformId = getPlatformIdByName(account.platform)
-      if (platformId && [1, 2, 3, 4, 5].includes(platformId)) { // 只支持5大平台
+      if (platformId && AVAILABLE_PLATFORM_IDS.has(platformId)) {
         platformIds.add(platformId)
       }
     }
@@ -2062,7 +2089,7 @@ const recalculatePlatformAccounts = (tab) => {
     if (account) {
       // 找到该账号对应的平台ID
       const platformId = getPlatformIdByName(account.platform)
-      if (platformId && tab.platformAccounts[platformId]) {
+      if (platformId && AVAILABLE_PLATFORM_IDS.has(platformId) && tab.platformAccounts[platformId]) {
         tab.platformAccounts[platformId].push(userId)
       }
     }
@@ -2233,6 +2260,7 @@ const canUnifiedPublish = (tab) => {
     tab.fileList.length > 0 &&
     tab.title.trim() !== '' &&
     tab.selectedPlatforms.length > 0 &&
+    !(tab.testMode && tab.selectedPlatforms.includes(1)) &&
     hasSelectedAccounts &&  // 新增：必须选择账号
     !tab.publishing
   )
@@ -2240,6 +2268,11 @@ const canUnifiedPublish = (tab) => {
 
 // 执行统一批量发布
 const executeUnifiedPublish = async (tab) => {
+  if (tab.testMode && tab.selectedPlatforms.includes(1)) {
+    ElMessage.error('小红书暂不支持测试模式，请移除小红书账号或关闭测试模式')
+    return
+  }
+
   if (!canUnifiedPublish(tab)) {
     ElMessage.warning('请填写完整信息并选择至少一个平台')
     return
@@ -2256,6 +2289,7 @@ const executeUnifiedPublish = async (tab) => {
       files: tab.fileList.map(f => f.path),
       title: tab.title,
       desc: tab.desc,
+      testMode: tab.testMode,
 
       // 平台列表和配置（每个平台的标签在config中）
       platforms: tab.selectedPlatforms,
@@ -2289,13 +2323,14 @@ const executeUnifiedPublish = async (tab) => {
       // 统计结果
       const successCount = tab.publishResults.filter(r => r.status === 'success').length
       const failCount = tab.publishResults.filter(r => r.status === 'error').length
+      const operationName = tab.testMode ? '测试' : '发布'
 
       if (failCount === 0) {
-        ElMessage.success(`🎉 全部发布成功！共 ${successCount} 个平台`)
-        tab.publishStatus = { message: `全部发布成功！共 ${successCount} 个平台`, type: 'success' }
+        ElMessage.success(`🎉 全部${operationName}完成！共 ${successCount} 个平台`)
+        tab.publishStatus = { message: `全部${operationName}完成！共 ${successCount} 个平台`, type: 'success' }
       } else {
-        ElMessage.warning(`发布完成：${successCount} 成功，${failCount} 失败`)
-        tab.publishStatus = { message: `发布完成：${successCount} 成功，${failCount} 失败`, type: 'warning' }
+        ElMessage.warning(`${operationName}完成：${successCount} 成功，${failCount} 失败`)
+        tab.publishStatus = { message: `${operationName}完成：${successCount} 成功，${failCount} 失败`, type: 'warning' }
       }
     } else {
       throw new Error(response.msg || '批量发布请求失败')
@@ -2306,8 +2341,10 @@ const executeUnifiedPublish = async (tab) => {
     ElMessage.error(`批量发布出错: ${error.message}`)
     tab.publishStatus = { message: `批量发布出错: ${error.message}`, type: 'error' }
     
-    // 如果后端不可用，尝试前端逐个调用（备用方案）
-    await fallbackUnifiedPublish(tab)
+    // 测试模式不能用模拟发布结果兜底，否则可能误报“已保存/已放弃”
+    if (!tab.testMode) {
+      await fallbackUnifiedPublish(tab)
+    }
   } finally {
     tab.publishing = false
   }
@@ -2376,23 +2413,19 @@ const fallbackUnifiedPublish = async (tab) => {
 // 根据平台ID获取该平台的差异化配置
 const getPlatformSpecificConfig = (tab, platformId) => {
   const config = tab.platformConfig
-  const common = config.common
 
   switch (platformId) {
     case 3: // 抖音
       return {
         douyinProductTitle: config.douyin.productTitle,
         douyinProductLink: config.douyin.productLink,
-        declaration_type: config.douyin.declaration_type,
-        collection: common.collection,  // 使用公共合集
-        aiDeclaration: common.aiDeclaration  // 使用公共AI声明
+        declaration_type: config.douyin.declaration_type
       }
     case 5: // B站
       return {
         bilibiliTid: config.bilibili.tid,
-        bilibiliAiDeclaration: common.aiDeclaration,  // 使用公共AI声明
-        isOriginal: config.bilibili.isOriginal ? 1 : 0,
-        collection: common.collection  // 使用公共合集
+        bilibiliAiDeclaration: config.bilibili.aiDeclaration,
+        isOriginal: config.bilibili.isOriginal ? 1 : 0
       }
     case 2: // 视频号
       return {
@@ -2400,19 +2433,16 @@ const getPlatformSpecificConfig = (tab, platformId) => {
         isOriginal: config.channels.isOriginal,
         declareOriginal: config.channels.isOriginal,
         tencentDeclareOriginal: config.channels.isOriginal,
-        tencentDeclaration: config.channels.declaration || '',
-        collection: common.collection  // 使用公共合集
+        tencentDeclaration: config.channels.declaration || ''
       }
     case 1: // 小红书
       return {
-        xiaohongshu_declaration: config.xiaohongshu.declaration || (common.aiDeclaration ? '笔记含AI合成内容' : ''),
-        isOriginal: config.xiaohongshu.isOriginal,
-        collection: common.collection  // 使用公共合集
+        xiaohongshu_declaration: config.xiaohongshu.declaration || '',
+        isOriginal: config.xiaohongshu.isOriginal
       }
     case 4: // 快手
       return {
-        kuaishou_declaration: config.kuaishou.declaration || (common.aiDeclaration ? '内容为AI生成' : ''),
-        collection: common.collection  // 使用公共合集
+        kuaishou_declaration: config.kuaishou.declaration || '内容为AI生成'
       }
     default:
       return {}
@@ -2528,6 +2558,30 @@ const cancelPublish = (tab) => {
   ElMessage.info('已取消发布')
 }
 
+const TEST_MODE_ACTIONS = {
+  2: '保存草稿',
+  3: '暂存离开',
+  4: '取消',
+  5: '存草稿',
+  6: '放弃'
+}
+
+const getTestModeAction = (platformId) => TEST_MODE_ACTIONS[platformId] || '结束测试'
+
+const onTestModeChange = (tab) => {
+  if (tab.testMode) {
+    tab.scheduleEnabled = false
+  }
+}
+
+const onPlatformChange = (tab) => {
+  tab.selectedAccounts = []
+  if (tab.selectedPlatform === 1 && tab.testMode) {
+    tab.testMode = false
+    ElMessage.info('小红书暂不支持测试模式，已切换为正式发布')
+  }
+}
+
 // 确认发布
 const confirmPublish = async (tab) => {
   // 防止重复点击
@@ -2553,6 +2607,11 @@ const confirmPublish = async (tab) => {
     tab.publishing = false
     throw new Error('请选择发布平台')
   }
+  if (tab.testMode && tab.selectedPlatform === 1) {
+    ElMessage.error('小红书暂不支持测试模式')
+    tab.publishing = false
+    throw new Error('小红书暂不支持测试模式')
+  }
   if (tab.selectedAccounts.length === 0) {
     ElMessage.error('请选择发布账号')
     tab.publishing = false
@@ -2571,10 +2630,11 @@ const confirmPublish = async (tab) => {
       const account = accountStore.accounts.find(acc => acc.id === accountId)
       return account ? account.filePath : accountId
     }), // 发送账号的文件路径
-    enableTimer: tab.scheduleEnabled ? 1 : 0,
-    videosPerDay: tab.scheduleEnabled ? tab.videosPerDay || 1 : 1,
-    dailyTimes: tab.scheduleEnabled ? tab.dailyTimes || ['10:00'] : ['10:00'],
-    startDays: tab.scheduleEnabled ? tab.startDays || 0 : 0,
+    testMode: tab.testMode,
+    enableTimer: tab.scheduleEnabled && !tab.testMode ? 1 : 0,
+    videosPerDay: tab.scheduleEnabled && !tab.testMode ? tab.videosPerDay || 1 : 1,
+    dailyTimes: tab.scheduleEnabled && !tab.testMode ? tab.dailyTimes || ['10:00'] : ['10:00'],
+    startDays: tab.scheduleEnabled && !tab.testMode ? tab.startDays || 0 : 0,
     declareOriginal: tab.isOriginal, // 原创声明
     tencentDeclareOriginal: tab.selectedPlatform === 2 ? tab.isOriginal : false, // 视频号原创声明
     productLink: tab.douyinProductLink.trim() || '',
@@ -2596,8 +2656,7 @@ const confirmPublish = async (tab) => {
     xiaohongshuDeclaration: tab.xiaohongshu_declaration || '',
     bilibiliTid: tab.bilibiliTid || 218, // B站分区ID（动物圈）
     bilibiliAiDeclaration: tab.bilibiliAiDeclaration || false, // B站创作声明：含AI生成内容
-    noReprint: tab.isOriginal ? 1 : 0, // 声明原创时禁止转载
-    collection: tab.collection || '大学篇' // 合集名称
+    noReprint: tab.isOriginal ? 1 : 0 // 声明原创时禁止转载
   }
 
   // 校验“内容自行拍摄”时必须选择地点与日期
@@ -2616,7 +2675,7 @@ const confirmPublish = async (tab) => {
   try {
     const data = await http.post('/postVideo', publishData)
     tab.publishStatus = {
-      message: '发布成功',
+      message: tab.testMode ? `测试完成：${getTestModeAction(tab.selectedPlatform)}` : '发布成功',
       type: 'success'
     }
     // 清空当前tab的数据
@@ -2780,7 +2839,7 @@ const batchPublish = async () => {
         publishResults.value.push({
           label: tab.label,
           status: 'success',
-          message: '发布成功'
+          message: tab.testMode ? `测试完成：${getTestModeAction(tab.selectedPlatform)}` : '发布成功'
         })
       } catch (error) {
         publishResults.value.push({
@@ -3206,9 +3265,6 @@ const closeScreenshotPreview = () => {
           }
         }
 
-        .collection-section {
-          margin: 20px 0;
-        }
       }
     }
   }

@@ -308,6 +308,10 @@ class KSBaseUploader(BaseVideoUploader):
         if not await cookie_auth(self.account_file):
             raise RuntimeError(f"cookie文件已失效，请先完成快手登录: {self.account_file}")
 
+        if getattr(self, "test_mode", False):
+            self.publish_strategy = KUAISHOU_PUBLISH_STRATEGY_IMMEDIATE
+            self.publish_date = 0
+
         if self.publish_strategy is None:
             self.publish_strategy = (
                 KUAISHOU_PUBLISH_STRATEGY_SCHEDULED
@@ -493,6 +497,7 @@ class KSVideo(KSBaseUploader):
         show_in_city: bool = True,  # 作品展示在同城页
         collection: str | None = None,  # 合集名称
         screenshot_manager: ScreenshotManager | None = None,  # 截图管理器（异常诊断）
+        test_mode: bool = False,
     ):
         super().__init__(
             publish_date=publish_date,
@@ -515,11 +520,44 @@ class KSVideo(KSBaseUploader):
         self.show_in_city = show_in_city
         self.collection = collection  # 合集名称
         self.screenshot_manager = screenshot_manager  # 截图管理器
+        self.test_mode = bool(test_mode)
 
     async def _take_error_screenshot(self, page: Page, error_msg: str = None) -> None:
         """辅助方法：错误时截图"""
         if self.screenshot_manager:
             await self.screenshot_manager.take_error_screenshot(page, error_msg)
+
+    async def cancel_test_upload(self, page: Page) -> None:
+        """测试模式下取消本次上传，不触发正式发布。"""
+        async def accept_native_dialog(dialog):
+            await dialog.accept()
+
+        page.once("dialog", accept_native_dialog)
+        selectors = [
+            'div[class*="_button-default_"]:has-text("取消")',
+            'button:has-text("取消")',
+            'div[class*="_button-default_"]:has-text("Cancel")',
+            'button:has-text("Cancel")',
+        ]
+        for selector in selectors:
+            button = page.locator(selector).last
+            if await button.count() and await button.is_visible():
+                kuaishou_logger.info(_msg("🧪", "测试模式：点击取消"))
+                await button.click()
+                await page.wait_for_timeout(500)
+
+                dialog = page.locator('[role="dialog"]:visible').last
+                if await dialog.count():
+                    confirm = dialog.locator(
+                        'button:has-text("确认取消"), button:has-text("确定"), '
+                        'button:has-text("Discard"), button:has-text("Confirm")'
+                    ).last
+                    if await confirm.count() and await confirm.is_visible():
+                        await confirm.click()
+
+                kuaishou_logger.success(_msg("🥳", "测试完成，本次上传已取消"))
+                return
+        raise RuntimeError("测试模式未找到“取消/Cancel”按钮")
 
     async def validate_upload_args(self):
         await self.validate_base_args()
@@ -734,6 +772,11 @@ class KSVideo(KSBaseUploader):
 
             if self.publish_strategy == KUAISHOU_PUBLISH_STRATEGY_SCHEDULED and self.publish_date != 0:
                 await self.set_schedule_time(page, self.publish_date)
+
+            if self.test_mode:
+                await self.cancel_test_upload(page)
+                upload_success = True
+                return
 
             kuaishou_logger.info(_msg("🚀", "小人正在点击发布按钮"))
             max_retries = 3  # 最大重试次数

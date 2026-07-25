@@ -309,6 +309,7 @@ class BilibiliBaseUploader(BaseVideoUploader):
         debug: bool = DEBUG_MODE,
         headless: bool | None = None,
         screenshot_manager = None,  # 截图管理器
+        test_mode: bool = False,
     ):
         self.title = title
         self.file_path = file_path
@@ -327,6 +328,7 @@ class BilibiliBaseUploader(BaseVideoUploader):
         self.local_executable_path = LOCAL_CHROME_PATH
         self.headless = get_local_chrome_headless() if headless is None else headless
         self.screenshot_manager = screenshot_manager  # 截图管理器
+        self.test_mode = bool(test_mode)
 
     async def validate_base_args(self):
         """验证基本参数"""
@@ -334,6 +336,10 @@ class BilibiliBaseUploader(BaseVideoUploader):
             raise RuntimeError(f"cookie文件不存在，请先完成B站登录: {self.account_file}")
         if not await cookie_auth(self.account_file):
             raise RuntimeError(f"cookie文件已失效，请先完成B站登录: {self.account_file}")
+
+        if self.test_mode:
+            self.publish_strategy = BILIBILI_PUBLISH_STRATEGY_IMMEDIATE
+            self.publish_date = 0
 
         self.file_path = self.validate_video_file(self.file_path)
         if self.cover_path:
@@ -374,10 +380,13 @@ class BilibiliVideo(BilibiliBaseUploader):
                 # 填写视频信息
                 await self._fill_video_info(page)
 
-                # 提交发布
-                await self._submit_video(page)
-
-                bilibili_logger.info(_msg("🎉", "视频上传成功"))
+                if self.test_mode:
+                    await self._save_draft(page)
+                    bilibili_logger.info(_msg("🎉", "测试完成，视频已存草稿"))
+                else:
+                    # 提交发布
+                    await self._submit_video(page)
+                    bilibili_logger.info(_msg("🎉", "视频上传成功"))
 
             finally:
                 await context.close()
@@ -961,6 +970,24 @@ class BilibiliVideo(BilibiliBaseUploader):
         await time_input.fill(publish_date.strftime("%Y-%m-%dT%H:%M"))
 
         bilibili_logger.info(_msg("⏰", f"设置定时发布: {publish_date}"))
+
+    async def _save_draft(self, page: Page):
+        """测试模式下保存为草稿，不触发立即投稿。"""
+        draft_selectors = [
+            'span.submit-draft:has-text("存草稿")',
+            'button:has-text("存草稿")',
+            'span.submit-draft:has-text("Save draft")',
+            'button:has-text("Save draft")',
+        ]
+        for selector in draft_selectors:
+            draft_button = page.locator(selector).first
+            if await draft_button.count() and await draft_button.is_visible():
+                bilibili_logger.info(_msg("🧪", "测试模式：点击存草稿"))
+                await draft_button.click()
+                await page.wait_for_timeout(2000)
+                bilibili_logger.success(_msg("🥳", "测试完成，视频已存草稿"))
+                return
+        raise RuntimeError("测试模式未找到“存草稿/Save draft”按钮")
 
     async def _submit_video(self, page: Page):
         """提交视频"""

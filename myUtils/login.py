@@ -16,6 +16,43 @@ from pathlib import Path
 from conf import BASE_DIR, LOCAL_CHROME_PATH
 from uploader.tk_uploader.main_chrome import TIKTOK_UPLOAD_URL, capture_ready_tiktok_qr
 
+DOUYIN_VERIFICATION_PHONE_SELECTORS = (
+    '#uc-second-verify [class*="highlight_text"]',
+    '#uc-second-verify [class*="highlight"]',
+    '#uc-second-verify [class*="bold"]',
+    '#uc-second-verify',
+    '[class*="uc_verification_component_typography"]',
+)
+MASKED_PHONE_PATTERN = re.compile(
+    r"(?<!\d)(?:\+?86[\s-]*)?(1\d{2}[*＊•·xX]{4,8}\d{2,4})(?!\d)"
+)
+
+
+def parse_douyin_verification_phone(text):
+    """从中英文短信提示中提取抖音展示的脱敏手机号。"""
+    match = MASKED_PHONE_PATTERN.search(text or "")
+    return match.group(1) if match else None
+
+
+async def extract_douyin_verification_phone(page, attempts=20, delay=0.25):
+    """等待验证码提示出现，并使用稳定的 class 片段提取脱敏手机号。"""
+    for attempt in range(attempts):
+        for selector in DOUYIN_VERIFICATION_PHONE_SELECTORS:
+            try:
+                locator = page.locator(selector).first
+                if not await locator.count():
+                    continue
+                text = await locator.inner_text()
+                phone = parse_douyin_verification_phone(text)
+                if phone:
+                    return phone
+            except Exception:
+                continue
+        if attempt < attempts - 1:
+            await asyncio.sleep(delay)
+    return None
+
+
 # 统一获取浏览器启动配置（防风控+引入本地浏览器）
 def get_browser_options(douyin=False):
     options = {
@@ -116,6 +153,13 @@ async def douyin_cookie_gen(id, status_queue, account_id=None, existing_file_pat
                 await sms_button.click()
                 print("✅ 已点击接收短信验证码按钮")
                 status_queue.put("NEED_VERIFICATION")
+
+                masked_phone = await extract_douyin_verification_phone(page)
+                if masked_phone:
+                    print(f"✅ 验证码已发送至: {masked_phone}")
+                    status_queue.put(f"VERIFICATION_PHONE:{masked_phone}")
+                else:
+                    print("⚠️ 已进入验证码流程，但未提取到脱敏手机号")
             
             # 开始循环处理验证码输入和验证
             max_retry = 5  # 最多重试5次

@@ -50,7 +50,7 @@
                 <el-tooltip content="视频号账号" placement="top">
                   <el-tag size="small" type="warning">{{ platformStats.channels }}</el-tag>
                 </el-tooltip>
-                <el-tooltip content="小红书账号" placement="top">
+                <el-tooltip v-if="SHOW_XIAOHONGSHU" content="小红书账号" placement="top">
                   <el-tag size="small" type="info">{{ platformStats.xiaohongshu }}</el-tag>
                 </el-tooltip>
                 <el-tooltip content="B站账号" placement="top">
@@ -59,7 +59,7 @@
                 <el-tooltip content="TikTok 账号" placement="top">
                   <el-tag size="small" type="primary">{{ platformStats.tiktok }}</el-tag>
                 </el-tooltip>
-                <el-tooltip content="百家号账号" placement="top">
+                <el-tooltip v-if="SHOW_BAIJIAHAO" content="百家号账号" placement="top">
                   <el-tag size="small" type="success">{{ platformStats.baijiahao }}</el-tag>
                 </el-tooltip>
               </div>
@@ -177,6 +177,7 @@ import {
 import { accountApi } from '@/api/account'
 import { materialApi } from '@/api/material'
 import { useAccountStore } from '@/stores/account'
+import { SHOW_XIAOHONGSHU, SHOW_BAIJIAHAO, isPlatformVisible } from '@/config/features'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
@@ -186,7 +187,7 @@ const loading = ref(false)
 
 // 账号统计数据 - 从真实数据计算
 const accountStats = computed(() => {
-  const accounts = accountStore.accounts
+  const accounts = accountStore.accounts.filter(account => isPlatformVisible(account.platform))
   const normal = accounts.filter(a => a.status === '正常').length
   const abnormal = accounts.filter(a => a.status !== '正常' && a.status !== '验证中').length
   return {
@@ -202,12 +203,24 @@ const platformStats = computed(() => {
   const kuaishou = accounts.filter(a => a.platform === '快手').length
   const douyin = accounts.filter(a => a.platform === '抖音').length
   const channels = accounts.filter(a => a.platform === '视频号').length
-  const xiaohongshu = accounts.filter(a => a.platform === '小红书').length
+  const xiaohongshu = SHOW_XIAOHONGSHU
+    ? accounts.filter(a => a.platform === '小红书').length
+    : 0
   const bilibili = accounts.filter(a => a.platform === 'B站').length
   const tiktok = accounts.filter(a => a.platform === 'TikTok').length
-  const baijiahao = accounts.filter(a => a.platform === '百家号').length
+  const baijiahao = SHOW_BAIJIAHAO
+    ? accounts.filter(a => a.platform === '百家号').length
+    : 0
   // 统计有账号的平台数量
-  const total = [kuaishou, douyin, channels, xiaohongshu, bilibili, tiktok, baijiahao].filter(n => n > 0).length
+  const total = [
+    kuaishou,
+    douyin,
+    channels,
+    bilibili,
+    tiktok,
+    ...(SHOW_XIAOHONGSHU ? [xiaohongshu] : []),
+    ...(SHOW_BAIJIAHAO ? [baijiahao] : [])
+  ].filter(n => n > 0).length
   return { total, kuaishou, douyin, channels, xiaohongshu, bilibili, tiktok, baijiahao }
 })
 

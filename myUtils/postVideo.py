@@ -10,6 +10,7 @@ from myUtils.screenshot_manager import ScreenshotManager
 from uploader.douyin_uploader.main import DouYinVideo
 from uploader.ks_uploader.main import KSVideo
 from uploader.tencent_uploader.main import TencentVideo
+from uploader.tk_uploader.main import TiktokVideo
 from uploader.xiaohongshu_uploader.main import XiaoHongShuVideo
 from uploader.baijiahao_uploader.main import BaiJiaHaoVideo
 from uploader.bilibili_uploader.main import BilibiliVideo, BILIBILI_PUBLISH_STRATEGY_IMMEDIATE, BILIBILI_PUBLISH_STRATEGY_SCHEDULED
@@ -121,7 +122,8 @@ def post_video_tencent(title, files, tags, account_file, category=TencentZoneTyp
                         is_draft=False, thumbnail_path='', desc='',
                         collection: str | None = None,  # 合集名称
                         declare_original: bool | None = None,
-                        declaration: str | None = None):
+                        declaration: str | None = None,
+                        test_mode: bool = False):
     """视频号视频发布
 
     Args:
@@ -145,7 +147,7 @@ def post_video_tencent(title, files, tags, account_file, category=TencentZoneTyp
     account_file = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
     files = [Path(BASE_DIR / "videoFile" / file) for file in files]
     thumbnail = resolve_thumbnail_path(thumbnail_path)
-    if enableTimer:
+    if enableTimer and not test_mode:
         publish_datetimes = generate_schedule_time_next_day(len(files), videos_per_day, daily_times, start_days)
     else:
         publish_datetimes = [0 for i in range(len(files))]
@@ -175,12 +177,13 @@ def post_video_tencent(title, files, tags, account_file, category=TencentZoneTyp
                 cookie,
                 category=category,
                 declare_original=declare_original,
-                is_draft=is_draft,
+                is_draft=is_draft or test_mode,
                 desc=desc or None,
                 thumbnail_path=str(thumbnail) if thumbnail else None,
                 collection=collection,  # 传递合集参数
                 declaration=declaration,  # 传递视频标注参数
                 screenshot_manager=screenshot_manager,  # 传递截图管理器
+                test_mode=test_mode,
             )
             asyncio.run(app.main(), debug=False)
 
@@ -189,7 +192,8 @@ def post_video_DouYin(title,files,tags,account_file,category=TencentZoneTypes.LI
                       thumbnail_landscape_path = '',
                       thumbnail_portrait_path = '',
                       productLink = '', productTitle = '', declaration_info = None, desc = '',
-                      collection: str | None = None):  # 合集名称
+                      collection: str | None = None,
+                      test_mode: bool = False):  # 合集名称
     # 生成文件的完整路径
     account_file = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
     files = [Path(BASE_DIR / "videoFile" / file) for file in files]
@@ -200,7 +204,7 @@ def post_video_DouYin(title,files,tags,account_file,category=TencentZoneTypes.LI
     thumbnail_portrait = resolve_thumbnail_path(thumbnail_portrait_path)
     
     print(f"[DEBUG] resolve_thumbnail_path 处理后 - thumbnail_landscape: {thumbnail_landscape} (type: {type(thumbnail_landscape)}), thumbnail_portrait: {thumbnail_portrait} (type: {type(thumbnail_portrait)})")
-    if enableTimer:
+    if enableTimer and not test_mode:
         publish_datetimes = generate_schedule_time_next_day(len(files), videos_per_day, daily_times,start_days)
     else:
         publish_datetimes = [0 for i in range(len(files))]
@@ -235,6 +239,7 @@ def post_video_DouYin(title,files,tags,account_file,category=TencentZoneTypes.LI
                 category=category,
                 collection=collection,  # 传递合集参数
                 screenshot_manager=screenshot_manager,  # 传递截图管理器
+                test_mode=test_mode,
             )
             asyncio.run(app.main())
 
@@ -243,7 +248,8 @@ def post_video_ks(title, files, tags, account_file, category=TencentZoneTypes.LI
                   enableTimer=False, videos_per_day=1, daily_times=None, start_days=0,
                   desc='', thumbnail_path='',
                   kuaishou_declaration='内容为AI生成', allow_duet=True, allow_download=True, show_in_city=True,
-                  collection: str | None = None):  # 合集名称
+                  collection: str | None = None,
+                  test_mode: bool = False):  # 合集名称
     """快手视频发布
 
     Args:
@@ -273,7 +279,7 @@ def post_video_ks(title, files, tags, account_file, category=TencentZoneTypes.LI
     if thumbnail:
         thumbnail = compress_image_if_needed(thumbnail, max_size_mb=5)
     
-    if enableTimer:
+    if enableTimer and not test_mode:
         publish_datetimes = generate_schedule_time_next_day(len(files), videos_per_day, daily_times, start_days)
     else:
         publish_datetimes = [0 for i in range(len(files))]
@@ -310,6 +316,7 @@ def post_video_ks(title, files, tags, account_file, category=TencentZoneTypes.LI
                 show_in_city=show_in_city,
                 collection=collection,  # 传递合集参数
                 screenshot_manager=screenshot_manager,  # 传递截图管理器
+                test_mode=test_mode,
             )
             asyncio.run(app.main(), debug=False)
 
@@ -410,12 +417,13 @@ def post_video_tiktok(
     is_aigc=True,
     productLink="",
     productTitle="",
+    test_mode=False,
 ):
     """TikTok视频发布"""
     account_files = [Path(BASE_DIR / "cookiesFile" / file) for file in account_file]
     video_files = [Path(BASE_DIR / "videoFile" / file) for file in files]
-    cover_file = Path(BASE_DIR / "videoFile" / thumbnail_path) if thumbnail_path else None
-    if enableTimer:
+    cover_file = resolve_thumbnail_path(thumbnail_path)
+    if enableTimer and not test_mode:
         publish_datetimes = generate_schedule_time_next_day(
             len(video_files), videos_per_day, daily_times, start_days
         )
@@ -438,12 +446,13 @@ def post_video_tiktok(
                 is_aigc=is_aigc,
                 product_link=productLink,
                 product_title=productTitle,
+                test_mode=test_mode,
             )
             asyncio.run(app.main(), debug=False)
 
 
 def post_video_bilibili(title, files, tags, account_file, category=None, enableTimer=False, videos_per_day=1, daily_times=None, start_days=0, tid=218, desc='',
-                         copyright_type=1, cover_path=None, collection=None, ai_declaration=False):
+                         copyright_type=1, cover_path=None, collection=None, ai_declaration=False, test_mode=False):
     """B站视频发布（使用 playwright 实现）
 
     Args:
@@ -470,7 +479,7 @@ def post_video_bilibili(title, files, tags, account_file, category=None, enableT
     # 处理封面路径
     resolved_cover = resolve_thumbnail_path(cover_path)
 
-    if enableTimer:
+    if enableTimer and not test_mode:
         publish_datetimes = generate_schedule_time_next_day(len(files), videos_per_day, daily_times, start_days)
     else:
         publish_datetimes = [0 for i in range(len(files))]
@@ -497,7 +506,11 @@ def post_video_bilibili(title, files, tags, account_file, category=None, enableT
                 print(f"封面路径：{resolved_cover}")
 
             # 使用 playwright 实现
-            publish_strategy = BILIBILI_PUBLISH_STRATEGY_SCHEDULED if enableTimer else BILIBILI_PUBLISH_STRATEGY_IMMEDIATE
+            publish_strategy = (
+                BILIBILI_PUBLISH_STRATEGY_SCHEDULED
+                if enableTimer and not test_mode
+                else BILIBILI_PUBLISH_STRATEGY_IMMEDIATE
+            )
             
             app = BilibiliVideo(
                 title=title,
@@ -513,6 +526,7 @@ def post_video_bilibili(title, files, tags, account_file, category=None, enableT
                 ai_declaration=ai_declaration,
                 season_name=collection,  # 合集名称
                 publish_strategy=publish_strategy,
+                test_mode=test_mode,
             )
 
             try:

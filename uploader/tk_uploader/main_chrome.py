@@ -41,6 +41,20 @@ CAPTION_EDITOR = (
     '[contenteditable="true"][role="combobox"]'
 )
 POST_BUTTON = 'button[data-e2e="post_video_button"]'
+COVER_ENTRY = (
+    ".cover-container, "
+    "div:has(> img.cover-image):has-text('编辑封面'), "
+    "div:has(> img.cover-image):has-text('Edit cover')"
+)
+COVER_EDITOR = ".cover-editor-container, [class*='cover-editor-container']"
+COVER_INPUT = (
+    'label[role="button"][aria-label="Upload cover image"] input[type="file"], '
+    'label[aria-label="上传封面"] input[type="file"], '
+    'input[type="file"][accept*="image/jpeg"], '
+    'input[type="file"][accept*="image/png"]'
+)
+AIGC_CONTAINER = '[data-e2e="aigc_container"]'
+ADVANCED_SETTINGS = '[data-e2e="advanced_settings_container"]'
 SCHEDULE_RADIO = 'input[type="radio"][name="postSchedule"][value="schedule"]'
 SCHEDULE_INPUTS = 'input.TUXTextInputCore-input[type="text"][readonly]'
 TIME_PICKER = ".tiktok-timepicker-time-picker-container"
@@ -191,6 +205,7 @@ class TiktokVideo:
         is_aigc=True,
         product_link="",
         product_title="",
+        test_mode=False,
     ):
         self.title = (title or "").strip()
         self.description = (description or "").strip()
@@ -201,6 +216,7 @@ class TiktokVideo:
         self.is_aigc = bool(is_aigc)
         self.product_link = (product_link or "").strip()
         self.product_title = (product_title or "").strip()
+        self.test_mode = bool(test_mode)
         self.account_file = str(account_file)
         self.headless = LOCAL_CHROME_HEADLESS
         self.locator_base = None
@@ -249,23 +265,14 @@ class TiktokVideo:
         await page.keyboard.insert_text(self.build_caption())
 
     async def upload_thumbnails(self, page):
-        cover = self.locator_base.locator(
-            ".cover-container, div:has(> img.cover-image):has-text('编辑封面'), "
-            "div:has(> img.cover-image):has-text('Edit cover')"
-        ).first
+        cover = self.locator_base.locator(COVER_ENTRY).first
         await cover.wait_for(state="visible", timeout=120_000)
         await cover.click()
 
-        editor = self.locator_base.locator(
-            ".cover-editor-container, [class*='cover-editor-container']"
-        ).first
+        editor = self.locator_base.locator(COVER_EDITOR).first
         await editor.wait_for(state="visible", timeout=15_000)
 
-        cover_input = editor.locator(
-            'label[aria-label="Upload cover image"] input[type="file"], '
-            'input[type="file"][accept*="image/jpeg"], '
-            'input[type="file"][accept*="image/png"]'
-        ).first
+        cover_input = editor.locator(COVER_INPUT).first
         await cover_input.wait_for(state="attached", timeout=10_000)
         await cover_input.set_input_files(self.thumbnail_path)
 
@@ -275,19 +282,21 @@ class TiktokVideo:
         if not await save_button.count():
             save_button = editor.locator(
                 "button:has-text('保存'), button:has-text('Save'), "
-                "button:has-text('确认'), button:has-text('Confirm')"
+                "button:has-text('确认'), button:has-text('Confirm'), "
+                "div.Button__content:has-text('保存'), "
+                "div.Button__content:has-text('Save')"
             ).first
         await save_button.wait_for(state="visible", timeout=15_000)
         await save_button.click()
         await editor.wait_for(state="hidden", timeout=30_000)
 
     async def set_aigc_content(self):
-        container = self.locator_base.locator('[data-e2e="aigc_container"]').first
+        container = self.locator_base.locator(AIGC_CONTAINER).first
         if not await container.count() or not await container.is_visible():
             more = self.locator_base.locator(
-                '[data-e2e="advanced_settings_container"].collapsed .more-btn, '
-                '[data-e2e="advanced_settings_container"] :text-is("显示更多"), '
-                '[data-e2e="advanced_settings_container"] :text-is("Show more")'
+                f'{ADVANCED_SETTINGS}.collapsed .more-btn, '
+                f'{ADVANCED_SETTINGS} :text-is("显示更多"), '
+                f'{ADVANCED_SETTINGS} :text-is("Show more")'
             ).first
             if await more.count() and await more.is_visible():
                 await more.click()
@@ -539,6 +548,34 @@ class TiktokVideo:
                 ) from exc
         tiktok_logger.success("  [-] TikTok video published successfully")
 
+    async def click_discard(self, page):
+        """Test mode: discard the prepared upload without publishing it."""
+        async def accept_native_dialog(dialog):
+            await dialog.accept()
+
+        page.once("dialog", accept_native_dialog)
+        discard_name = re.compile(r"^(放弃|Discard)$", re.I)
+        button = self.locator_base.get_by_role("button", name=discard_name).first
+        if not await button.count():
+            button = self.locator_base.get_by_text(discard_name, exact=True).first
+        if not await button.count() or not await button.is_visible():
+            raise RuntimeError('TikTok test mode could not find the "放弃/Discard" button')
+
+        tiktok_logger.info("[TEST] Clicking TikTok discard button")
+        await button.click()
+        await page.wait_for_timeout(500)
+
+        dialog = page.locator('[role="dialog"]:visible').last
+        if await dialog.count():
+            confirm = dialog.get_by_role(
+                "button",
+                name=re.compile(r"^(放弃|Discard|确认|Confirm)$", re.I),
+            ).last
+            if await confirm.count() and await confirm.is_visible():
+                await confirm.click()
+
+        tiktok_logger.success("[TEST] TikTok upload discarded; nothing was published")
+
     async def get_last_video_id(self, page):
         links = page.locator(
             'div[data-tt="components_PostInfoCell_Container"] a[href*="/video/"], '
@@ -569,13 +606,16 @@ class TiktokVideo:
             if self.is_aigc:
                 await self.set_aigc_content()
             await self.add_product_link()
-            if self.publish_date:
+            if self.publish_date and not self.test_mode:
                 await self.set_schedule_time(page, self.publish_date)
 
-            await self.click_publish(page)
-            video_id = await self.get_last_video_id(page)
-            if video_id:
-                tiktok_logger.success(f"video_id: {video_id}")
+            if self.test_mode:
+                await self.click_discard(page)
+            else:
+                await self.click_publish(page)
+                video_id = await self.get_last_video_id(page)
+                if video_id:
+                    tiktok_logger.success(f"video_id: {video_id}")
             await context.storage_state(path=self.account_file)
         finally:
             await context.close()
