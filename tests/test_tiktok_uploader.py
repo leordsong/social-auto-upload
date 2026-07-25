@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 from uploader.tk_uploader.main_chrome import (
     ADD_LINK_DIALOG,
     ADVANCED_SETTINGS,
+    AIGC_CONFIRM_DIALOG,
     AIGC_CONTAINER,
     ANCHOR_CONTAINER,
     CALENDAR_PICKER,
@@ -52,6 +53,7 @@ class TiktokUploaderTests(unittest.TestCase):
         self.assertIn(".cover-editor-container", COVER_EDITOR)
         self.assertIn('aria-label="Upload cover image"', COVER_INPUT)
         self.assertEqual(AIGC_CONTAINER, '[data-e2e="aigc_container"]')
+        self.assertEqual(AIGC_CONFIRM_DIALOG, '[role="dialog"]')
         self.assertEqual(
             ADVANCED_SETTINGS,
             '[data-e2e="advanced_settings_container"]',
@@ -369,17 +371,67 @@ class TiktokUploaderTests(unittest.TestCase):
         more_query = MagicMock()
         more_query.first = more
 
-        video.locator_base = MagicMock()
-        video.locator_base.locator.side_effect = (
-            lambda selector: container_query
-            if selector == AIGC_CONTAINER
-            else more_query
+        missing_dialog = MagicMock()
+        missing_dialog.wait_for = AsyncMock(
+            side_effect=PlaywrightTimeoutError("not shown")
         )
+        filtered_dialogs = MagicMock()
+        filtered_dialogs.last = missing_dialog
+        dialogs = MagicMock()
+        dialogs.filter.return_value = filtered_dialogs
+
+        video.locator_base = MagicMock()
+        video.locator_base.locator.side_effect = lambda selector: {
+            AIGC_CONTAINER: container_query,
+            AIGC_CONFIRM_DIALOG: dialogs,
+        }.get(selector, more_query)
 
         asyncio.run(video.set_aigc_content())
 
         more.click.assert_awaited_once()
         switch.click.assert_awaited_once_with(force=True)
+        missing_dialog.wait_for.assert_awaited_once_with(
+            state="visible",
+            timeout=5_000,
+        )
+
+    def test_aigc_confirmation_dialog_clicks_enable(self):
+        video = TiktokVideo(
+            "标题",
+            "demo.mp4",
+            [],
+            0,
+            "cookie.json",
+            is_aigc=True,
+        )
+        confirm = MagicMock()
+        confirm.count = AsyncMock(return_value=1)
+        confirm.wait_for = AsyncMock()
+        confirm.click = AsyncMock()
+        confirm_query = MagicMock()
+        confirm_query.last = confirm
+
+        dialog = MagicMock()
+        dialog.wait_for = AsyncMock()
+        dialog.get_by_role.return_value = confirm_query
+        filtered_dialogs = MagicMock()
+        filtered_dialogs.last = dialog
+        dialogs = MagicMock()
+        dialogs.filter.return_value = filtered_dialogs
+        video.locator_base = MagicMock()
+        video.locator_base.locator.return_value = dialogs
+
+        result = asyncio.run(video.confirm_aigc_dialog())
+
+        self.assertTrue(result)
+        confirm.click.assert_awaited_once()
+        self.assertEqual(
+            dialog.wait_for.await_args_list,
+            [
+                call(state="visible", timeout=5_000),
+                call(state="hidden", timeout=30_000),
+            ],
+        )
 
     def test_publish_uses_stable_data_e2e_button(self):
         video = TiktokVideo("标题", "demo.mp4", [], 0, "cookie.json")

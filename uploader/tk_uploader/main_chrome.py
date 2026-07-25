@@ -56,6 +56,7 @@ COVER_INPUT = (
 )
 AIGC_CONTAINER = '[data-e2e="aigc_container"]'
 ADVANCED_SETTINGS = '[data-e2e="advanced_settings_container"]'
+AIGC_CONFIRM_DIALOG = '[role="dialog"]'
 ANCHOR_CONTAINER = '[data-e2e="anchor_container"]'
 ADD_LINK_DIALOG = (
     '[role="dialog"][title="添加链接"], '
@@ -347,6 +348,38 @@ class TiktokVideo:
                 checked = "true" if checked == "checked" else "false"
         if (checked == "true") != self.is_aigc:
             await switch.click(force=True)
+            if self.is_aigc:
+                await self.confirm_aigc_dialog()
+
+    async def confirm_aigc_dialog(self):
+        """Confirm TikTok's optional first-time AI-content disclosure dialog."""
+        dialogs = self.locator_base.locator(AIGC_CONFIRM_DIALOG)
+        dialog = dialogs.filter(
+            has_text=re.compile(
+                r"(标记\s*AI\s*生成的内容|Label AI-generated content|"
+                r"AI-generated content)",
+                re.I,
+            )
+        ).last
+        try:
+            await dialog.wait_for(state="visible", timeout=5_000)
+        except PlaywrightTimeoutError:
+            return False
+
+        confirm = dialog.get_by_role(
+            "button",
+            name=re.compile(r"^(开启|Turn on|Enable)$", re.I),
+        ).last
+        if not await confirm.count():
+            confirm = dialog.locator(
+                "button:has-text('开启'), "
+                "button:has-text('Turn on'), "
+                "button:has-text('Enable')"
+            ).last
+        await confirm.wait_for(state="visible", timeout=10_000)
+        await confirm.click()
+        await dialog.wait_for(state="hidden", timeout=30_000)
+        return True
 
     @staticmethod
     def _product_search_value(value):
