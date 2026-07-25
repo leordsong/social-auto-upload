@@ -288,7 +288,9 @@ class TiktokVideo:
         caption = self.build_caption()
         try:
             # fill() does not require pointer events, so it still works while
-            # TikTok's upload/progress layer overlaps the editor.
+            # TikTok's upload/progress layer overlaps the editor. Clear the
+            # filename populated by TikTok before inserting our own caption.
+            await editor.fill("", timeout=120_000)
             await editor.fill(caption, timeout=120_000)
         except PlaywrightTimeoutError:
             # Keep a keyboard fallback for DraftJS variants that reject fill().

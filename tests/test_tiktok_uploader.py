@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from uploader.tk_uploader.main_chrome import (
     ADD_LINK_DIALOG,
@@ -222,9 +222,12 @@ class TiktokUploaderTests(unittest.TestCase):
 
         asyncio.run(video.add_title_tags(page))
 
-        editor.fill.assert_awaited_once_with(
-            "标题\n描述 #猫",
-            timeout=120_000,
+        self.assertEqual(
+            editor.fill.await_args_list,
+            [
+                call("", timeout=120_000),
+                call("标题\n描述 #猫", timeout=120_000),
+            ],
         )
         page.keyboard.press.assert_not_called()
 
