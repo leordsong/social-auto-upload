@@ -26,11 +26,12 @@ except ImportError:  # Backward compatibility for older installations.
         async_playwright,
     )
 
-from conf import LOCAL_CHROME_HEADLESS, LOCAL_CHROME_PATH
+from conf import LOCAL_CHROME_PATH
 from uploader.tk_uploader.tk_config import Tk_Locator
 from utils.base_social_media import set_init_script
 from utils.files_times import get_absolute_path
 from utils.log import tiktok_logger
+from utils.runtime_config import get_local_chrome_headless
 
 
 TIKTOK_UPLOAD_URL = "https://www.tiktok.com/tiktokstudio/upload?from=webapp&tab=video"
@@ -55,6 +56,27 @@ COVER_INPUT = (
 )
 AIGC_CONTAINER = '[data-e2e="aigc_container"]'
 ADVANCED_SETTINGS = '[data-e2e="advanced_settings_container"]'
+ANCHOR_CONTAINER = '[data-e2e="anchor_container"]'
+ADD_LINK_DIALOG = (
+    '[role="dialog"][title="添加链接"], '
+    '[role="dialog"][title="Add link"]'
+)
+PRODUCT_DIALOG = (
+    '[role="dialog"][title="添加商品链接"], '
+    '[role="dialog"][title="Add product link"]'
+)
+PRODUCT_SELECTOR_DIALOG = (
+    '[role="dialog"].product-selector-modal[title="添加商品链接"], '
+    '[role="dialog"].product-selector-modal[title="Add product link"]'
+)
+PRODUCT_SEARCH_INPUT = (
+    '.product-search-input input[type="text"], '
+    'input[placeholder="搜索商品"], '
+    'input[placeholder="Search products"], '
+    'input[placeholder="Search product"]'
+)
+PRODUCT_ROW = "tr.product-tb-row"
+PRODUCT_SELECTABLE_RADIO = 'input[type="radio"]:not([disabled])'
 SCHEDULE_RADIO = 'input[type="radio"][name="postSchedule"][value="schedule"]'
 SCHEDULE_INPUTS = 'input.TUXTextInputCore-input[type="text"][readonly]'
 TIME_PICKER = ".tiktok-timepicker-time-picker-container"
@@ -124,7 +146,9 @@ async def cookie_auth(account_file):
     context = None
     try:
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(**_browser_options(LOCAL_CHROME_HEADLESS))
+            browser = await playwright.chromium.launch(
+                **_browser_options(get_local_chrome_headless())
+            )
             context = await browser.new_context(storage_state=str(account_file))
             context = await set_init_script(context)
             page = await context.new_page()
@@ -220,7 +244,7 @@ class TiktokVideo:
         self.product_title = (product_title or "").strip()
         self.test_mode = bool(test_mode)
         self.account_file = str(account_file)
-        self.headless = LOCAL_CHROME_HEADLESS
+        self.headless = get_local_chrome_headless()
         self.locator_base = None
 
     @staticmethod
@@ -261,10 +285,17 @@ class TiktokVideo:
     async def add_title_tags(self, page):
         editor = self.locator_base.locator(CAPTION_EDITOR).first
         await editor.wait_for(state="visible", timeout=120_000)
-        await editor.click()
-        await page.keyboard.press("Control+A")
-        await page.keyboard.press("Backspace")
-        await page.keyboard.insert_text(self.build_caption())
+        caption = self.build_caption()
+        try:
+            # fill() does not require pointer events, so it still works while
+            # TikTok's upload/progress layer overlaps the editor.
+            await editor.fill(caption, timeout=120_000)
+        except PlaywrightTimeoutError:
+            # Keep a keyboard fallback for DraftJS variants that reject fill().
+            await editor.focus(timeout=30_000)
+            await page.keyboard.press("Control+A")
+            await page.keyboard.press("Backspace")
+            await page.keyboard.insert_text(caption)
 
     async def upload_thumbnails(self, page):
         cover = self.locator_base.locator(COVER_ENTRY).first
@@ -315,16 +346,116 @@ class TiktokVideo:
         if (checked == "true") != self.is_aigc:
             await switch.click(force=True)
 
+    @staticmethod
+    def _product_search_value(value):
+        """Accept a raw product ID or extract a long numeric ID from a URL."""
+        match = re.search(r"(?<!\d)(\d{8,})(?!\d)", value or "")
+        return match.group(1) if match else (value or "").strip()
+
+    @staticmethod
+    async def _modal_button(modal, names):
+        button = modal.get_by_role(
+            "button", name=re.compile(rf"^({'|'.join(names)})$", re.I)
+        ).first
+        await button.wait_for(state="visible", timeout=30_000)
+        return button
+
     async def add_product_link(self):
-        """Product-link payload is retained until reliable TikTok DOM is supplied."""
-        if self.product_link:
-            tiktok_logger.warning(
-                "[!] TikTok product link was provided but was not attached: "
-                "the current TikTok product-link DOM locator is unknown. "
-                f"title={self.product_title!r}"
+        """Attach a TikTok Shop product by product ID."""
+        if not self.product_link:
+            return True
+
+        product_id = self._product_search_value(self.product_link)
+        if not product_id:
+            raise ValueError("TikTok product ID cannot be empty")
+
+        try:
+            anchor = self.locator_base.locator(ANCHOR_CONTAINER).first
+            await anchor.wait_for(state="visible", timeout=30_000)
+            add_entry = anchor.get_by_role(
+                "button", name=re.compile(r"^(添加|Add)$", re.I)
+            ).first
+            if not await add_entry.count():
+                add_entry = anchor.locator(
+                    'button:has([data-icon="Plus"]), '
+                    'button:has([data-testid="Plus"])'
+                ).first
+            await add_entry.click()
+
+            add_dialog = self.locator_base.locator(ADD_LINK_DIALOG).last
+            await add_dialog.wait_for(state="visible", timeout=30_000)
+
+            link_type = add_dialog.get_by_role("combobox").first
+            if await link_type.count() and await link_type.is_visible():
+                selected_type = await link_type.inner_text()
+                if not re.search(r"(商品|Product)", selected_type, re.I):
+                    await link_type.click()
+                    product_option = self.locator_base.get_by_role(
+                        "option", name=re.compile(r"^(商品|Product)$", re.I)
+                    ).first
+                    await product_option.click()
+
+            next_button = await self._modal_button(
+                add_dialog, ("下一步", "Next")
             )
-            return False
-        return True
+            await next_button.click()
+            await add_dialog.wait_for(state="hidden", timeout=30_000)
+
+            selector_dialog = self.locator_base.locator(
+                PRODUCT_SELECTOR_DIALOG
+            ).last
+            await selector_dialog.wait_for(state="visible", timeout=30_000)
+
+            store_tab = selector_dialog.get_by_role(
+                "button",
+                name=re.compile(r"^(我的商店|My (shop|store))$", re.I),
+            ).first
+            if await store_tab.count() and await store_tab.is_visible():
+                await store_tab.click()
+
+            search_input = selector_dialog.locator(PRODUCT_SEARCH_INPUT).first
+            await search_input.wait_for(state="visible", timeout=30_000)
+            await search_input.fill(product_id)
+            await search_input.press("Enter")
+
+            matching_rows = selector_dialog.locator(PRODUCT_ROW).filter(
+                has_text=product_id
+            )
+            radio = matching_rows.locator(PRODUCT_SELECTABLE_RADIO).first
+            try:
+                await radio.wait_for(state="visible", timeout=30_000)
+            except PlaywrightTimeoutError as exc:
+                raise LookupError(
+                    f"TikTok product {product_id} was not found or is unavailable"
+                ) from exc
+            await radio.click(force=True)
+
+            next_button = await self._modal_button(
+                selector_dialog, ("下一步", "Next")
+            )
+            await next_button.click()
+            await selector_dialog.wait_for(state="hidden", timeout=30_000)
+
+            name_dialog = self.locator_base.locator(PRODUCT_DIALOG).last
+            await name_dialog.wait_for(state="visible", timeout=30_000)
+            if self.product_title:
+                name_input = name_dialog.get_by_label(
+                    re.compile(r"^(商品名称|Product name)$", re.I)
+                ).first
+                await name_input.wait_for(state="visible", timeout=30_000)
+                await name_input.fill(self.product_title[:30])
+
+            confirm_button = await self._modal_button(
+                name_dialog, ("添加", "Add")
+            )
+            await confirm_button.click()
+            await name_dialog.wait_for(state="hidden", timeout=30_000)
+            tiktok_logger.info(f"[+] TikTok product attached: {product_id}")
+            return True
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to attach TikTok product {product_id}: {exc}"
+            ) from exc
 
     async def handle_upload_error(self):
         tiktok_logger.info("[+] Retrying TikTok video file selection")
@@ -590,10 +721,18 @@ class TiktokVideo:
         return None
 
     async def upload(self, playwright: Playwright):
+        tiktok_logger.info(
+            f"[+] Launching TikTok upload browser (headless={self.headless})"
+        )
         browser = await playwright.chromium.launch(**_browser_options(self.headless))
-        context = await browser.new_context(storage_state=self.account_file)
+        context_options = {"storage_state": self.account_file}
+        if not self.headless:
+            context_options["no_viewport"] = True
+        context = await browser.new_context(**context_options)
         context = await set_init_script(context)
         page = await context.new_page()
+        if not self.headless:
+            await page.bring_to_front()
         try:
             await page.goto(TIKTOK_UPLOAD_URL, wait_until="domcontentloaded", timeout=60_000)
             tiktok_logger.info(f"[+] Uploading TikTok video: {self.title}")

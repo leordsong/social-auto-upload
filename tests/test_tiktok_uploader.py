@@ -4,14 +4,22 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from uploader.tk_uploader.main_chrome import (
+    ADD_LINK_DIALOG,
     ADVANCED_SETTINGS,
     AIGC_CONTAINER,
+    ANCHOR_CONTAINER,
     CALENDAR_PICKER,
     CAPTION_EDITOR,
     COVER_EDITOR,
     COVER_ENTRY,
     COVER_INPUT,
     POST_BUTTON,
+    PRODUCT_DIALOG,
+    PRODUCT_ROW,
+    PRODUCT_SEARCH_INPUT,
+    PRODUCT_SELECTABLE_RADIO,
+    PRODUCT_SELECTOR_DIALOG,
+    PlaywrightTimeoutError,
     QR_CODE_CANVAS,
     QR_LOADING_MASK,
     SCHEDULE_INPUTS,
@@ -48,6 +56,12 @@ class TiktokUploaderTests(unittest.TestCase):
             ADVANCED_SETTINGS,
             '[data-e2e="advanced_settings_container"]',
         )
+        self.assertEqual(ANCHOR_CONTAINER, '[data-e2e="anchor_container"]')
+        self.assertIn('[role="dialog"]', ADD_LINK_DIALOG)
+        self.assertIn("product-selector-modal", PRODUCT_SELECTOR_DIALOG)
+        self.assertEqual(PRODUCT_ROW, "tr.product-tb-row")
+        self.assertNotIn("jsx-", PRODUCT_SEARCH_INPUT)
+        self.assertNotIn("jsx-", PRODUCT_DIALOG)
         for selector in (COVER_ENTRY, COVER_EDITOR, COVER_INPUT):
             self.assertNotIn("jsx-", selector)
 
@@ -199,7 +213,34 @@ class TiktokUploaderTests(unittest.TestCase):
         )
         editor = MagicMock()
         editor.wait_for = AsyncMock()
-        editor.click = AsyncMock()
+        editor.fill = AsyncMock()
+        query = MagicMock()
+        query.first = editor
+        video.locator_base = MagicMock()
+        video.locator_base.locator.return_value = query
+        page = MagicMock()
+
+        asyncio.run(video.add_title_tags(page))
+
+        editor.fill.assert_awaited_once_with(
+            "标题\n描述 #猫",
+            timeout=120_000,
+        )
+        page.keyboard.press.assert_not_called()
+
+    def test_caption_editor_uses_keyboard_fallback_when_fill_times_out(self):
+        video = TiktokVideo(
+            "标题",
+            "demo.mp4",
+            ["猫"],
+            0,
+            "cookie.json",
+            description="描述",
+        )
+        editor = MagicMock()
+        editor.wait_for = AsyncMock()
+        editor.fill = AsyncMock(side_effect=PlaywrightTimeoutError("blocked"))
+        editor.focus = AsyncMock()
         query = MagicMock()
         query.first = editor
         video.locator_base = MagicMock()
@@ -210,9 +251,30 @@ class TiktokUploaderTests(unittest.TestCase):
 
         asyncio.run(video.add_title_tags(page))
 
+        editor.focus.assert_awaited_once_with(timeout=30_000)
         page.keyboard.press.assert_any_await("Control+A")
         page.keyboard.press.assert_any_await("Backspace")
         page.keyboard.insert_text.assert_awaited_once_with("标题\n描述 #猫")
+
+    def test_upload_browser_uses_runtime_headless_config(self):
+        with patch(
+            "uploader.tk_uploader.main_chrome.get_local_chrome_headless",
+            side_effect=[False, True],
+        ):
+            visible = TiktokVideo(
+                "标题", "demo.mp4", [], 0, "cookie.json"
+            )
+            headless = TiktokVideo(
+                "标题",
+                "demo.mp4",
+                [],
+                0,
+                "cookie.json",
+                test_mode=True,
+            )
+
+        self.assertFalse(visible.headless)
+        self.assertTrue(headless.headless)
 
     def test_cover_upload_uses_editor_input_and_button_content_fallback(self):
         video = TiktokVideo(
@@ -355,20 +417,146 @@ class TiktokUploaderTests(unittest.TestCase):
         )
         self.assertEqual(video.thumbnail_path, "cover.png")
 
-    def test_product_link_is_explicitly_reported_as_not_attached(self):
+    def test_product_search_value_accepts_id_or_url(self):
+        self.assertEqual(
+            TiktokVideo._product_search_value("1732510820131049700"),
+            "1732510820131049700",
+        )
+        self.assertEqual(
+            TiktokVideo._product_search_value(
+                "https://shop.example/product/1732510820131049700?source=video"
+            ),
+            "1732510820131049700",
+        )
+
+    def test_product_link_selects_matching_available_product_and_adds_name(self):
         video = TiktokVideo(
             "标题",
             "demo.mp4",
             [],
             0,
             "cookie.json",
-            product_link="https://shop.example/item",
-            product_title="商品",
+            product_link="1732510820131049700",
+            product_title="商品展示名称",
         )
-        with patch("uploader.tk_uploader.main_chrome.tiktok_logger.warning") as warning:
-            result = asyncio.run(video.add_product_link())
-        self.assertFalse(result)
-        warning.assert_called_once()
+
+        add_entry = MagicMock()
+        add_entry.count = AsyncMock(return_value=1)
+        add_entry.click = AsyncMock()
+        add_entry_query = MagicMock()
+        add_entry_query.first = add_entry
+        anchor = MagicMock()
+        anchor.wait_for = AsyncMock()
+        anchor.get_by_role.return_value = add_entry_query
+
+        link_type = MagicMock()
+        link_type.count = AsyncMock(return_value=1)
+        link_type.is_visible = AsyncMock(return_value=True)
+        link_type.inner_text = AsyncMock(return_value="商品")
+        link_type_query = MagicMock()
+        link_type_query.first = link_type
+        first_next = MagicMock()
+        first_next.wait_for = AsyncMock()
+        first_next.click = AsyncMock()
+        first_next_query = MagicMock()
+        first_next_query.first = first_next
+        add_dialog = MagicMock()
+        add_dialog.wait_for = AsyncMock()
+        add_dialog.get_by_role.side_effect = (
+            lambda role, **kwargs: link_type_query
+            if role == "combobox"
+            else first_next_query
+        )
+
+        store_tab = MagicMock()
+        store_tab.count = AsyncMock(return_value=1)
+        store_tab.is_visible = AsyncMock(return_value=True)
+        store_tab.click = AsyncMock()
+        store_tab_query = MagicMock()
+        store_tab_query.first = store_tab
+        second_next = MagicMock()
+        second_next.wait_for = AsyncMock()
+        second_next.click = AsyncMock()
+        second_next_query = MagicMock()
+        second_next_query.first = second_next
+        search_input = MagicMock()
+        search_input.wait_for = AsyncMock()
+        search_input.fill = AsyncMock()
+        search_input.press = AsyncMock()
+        search_query = MagicMock()
+        search_query.first = search_input
+        radio = MagicMock()
+        radio.wait_for = AsyncMock()
+        radio.click = AsyncMock()
+        radio_query = MagicMock()
+        radio_query.first = radio
+        matching_rows = MagicMock()
+        matching_rows.locator.return_value = radio_query
+        rows = MagicMock()
+        rows.filter.return_value = matching_rows
+        selector_dialog = MagicMock()
+        selector_dialog.wait_for = AsyncMock()
+
+        def selector_role(role, **kwargs):
+            pattern = kwargs["name"].pattern
+            return store_tab_query if "我的商店" in pattern else second_next_query
+
+        selector_dialog.get_by_role.side_effect = selector_role
+        selector_dialog.locator.side_effect = (
+            lambda selector: search_query
+            if selector == PRODUCT_SEARCH_INPUT
+            else rows
+        )
+
+        name_input = MagicMock()
+        name_input.wait_for = AsyncMock()
+        name_input.fill = AsyncMock()
+        name_input_query = MagicMock()
+        name_input_query.first = name_input
+        confirm = MagicMock()
+        confirm.wait_for = AsyncMock()
+        confirm.click = AsyncMock()
+        confirm_query = MagicMock()
+        confirm_query.first = confirm
+        name_dialog = MagicMock()
+        name_dialog.wait_for = AsyncMock()
+        name_dialog.get_by_label.return_value = name_input_query
+        name_dialog.get_by_role.return_value = confirm_query
+
+        anchor_query = MagicMock()
+        anchor_query.first = anchor
+        add_dialog_query = MagicMock()
+        add_dialog_query.last = add_dialog
+        selector_dialog_query = MagicMock()
+        selector_dialog_query.last = selector_dialog
+        name_dialog_query = MagicMock()
+        name_dialog_query.last = name_dialog
+        video.locator_base = MagicMock()
+
+        def locate(selector):
+            return {
+                ANCHOR_CONTAINER: anchor_query,
+                ADD_LINK_DIALOG: add_dialog_query,
+                PRODUCT_SELECTOR_DIALOG: selector_dialog_query,
+                PRODUCT_DIALOG: name_dialog_query,
+            }[selector]
+
+        video.locator_base.locator.side_effect = locate
+
+        result = asyncio.run(video.add_product_link())
+
+        self.assertTrue(result)
+        add_entry.click.assert_awaited_once()
+        first_next.click.assert_awaited_once()
+        store_tab.click.assert_awaited_once()
+        search_input.fill.assert_awaited_once_with("1732510820131049700")
+        search_input.press.assert_awaited_once_with("Enter")
+        rows.filter.assert_called_once_with(has_text="1732510820131049700")
+        matching_rows.locator.assert_called_once_with(PRODUCT_SELECTABLE_RADIO)
+        radio.click.assert_awaited_once_with(force=True)
+        second_next.click.assert_awaited_once()
+        name_input.fill.assert_awaited_once_with("商品展示名称")
+        confirm.click.assert_awaited_once()
 
     def test_post_video_helper_forwards_aigc_product_and_test_mode(self):
         app = MagicMock()
@@ -384,7 +572,7 @@ class TiktokUploaderTests(unittest.TestCase):
                 account_file=["cookie.json"],
                 description="描述",
                 is_aigc=True,
-                productLink="https://shop.example/item",
+                productLink="1732510820131049700",
                 productTitle="商品",
                 test_mode=True,
             )
@@ -392,7 +580,7 @@ class TiktokUploaderTests(unittest.TestCase):
         kwargs = uploader.call_args.kwargs
         self.assertEqual(kwargs["description"], "描述")
         self.assertTrue(kwargs["is_aigc"])
-        self.assertEqual(kwargs["product_link"], "https://shop.example/item")
+        self.assertEqual(kwargs["product_link"], "1732510820131049700")
         self.assertEqual(kwargs["product_title"], "商品")
         self.assertTrue(kwargs["test_mode"])
         app.main.assert_awaited_once()

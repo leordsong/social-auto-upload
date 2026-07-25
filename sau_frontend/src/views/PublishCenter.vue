@@ -564,18 +564,24 @@
 
                 <div class="form-item">
                   <label>商品名称</label>
-                  <el-input v-model="tab.platformConfig.tiktok.productTitle" placeholder="请输入商品名称（可选）" clearable />
+                  <el-input
+                    v-model="tab.platformConfig.tiktok.productTitle"
+                    placeholder="请输入商品名称（可选）"
+                    maxlength="30"
+                    show-word-limit
+                    clearable
+                  />
                 </div>
 
                 <div class="form-item">
-                  <label>商品链接</label>
-                  <el-input v-model="tab.platformConfig.tiktok.productLink" placeholder="请输入商品链接（可选）" clearable />
-                  <el-alert
-                    title="商品字段会传入任务；因 TikTok 网页定位尚未提供，当前会记录告警但不会自动挂载商品。"
-                    type="warning"
-                    :closable="false"
-                    show-icon
-                    style="margin-top: 10px;"
+                  <label>商品 ID</label>
+                  <el-input
+                    v-model="tab.platformConfig.tiktok.productLink"
+                    placeholder="请输入 TikTok Shop 商品 ID（仅限数字，可选）"
+                    inputmode="numeric"
+                    maxlength="32"
+                    clearable
+                    @input="value => setTikTokProductId(tab, value)"
                   />
                 </div>
               </div>
@@ -898,31 +904,26 @@
             />
           </div>
 
-          <!-- 平台特殊功能：商品链接和声明类型（抖音） -->
+          <!-- 平台特殊功能：商品链接/ID 和声明类型（抖音、TikTok） -->
           <div v-if="getPlatformConfig(tab.selectedPlatform).features.douyinProduct" class="douyinProduct-section">
-            <h3>商品链接</h3>
+            <h3>{{ tab.selectedPlatform === 6 ? 'TikTok 商品' : '商品链接' }}</h3>
             <el-input
               v-model="tab.douyinProductTitle"
               type="text"
               :rows="1"
               placeholder="请输入商品名称"
-              maxlength="200"
+              :maxlength="tab.selectedPlatform === 6 ? 30 : 200"
               class="douyinProduct-name-input"
             />
             <el-input
               v-model="tab.douyinProductLink"
               type="text"
               :rows="1"
-              placeholder="请输入商品链接"
-              maxlength="200"
+              :placeholder="tab.selectedPlatform === 6 ? '请输入 TikTok Shop 商品 ID' : '请输入商品链接'"
+              :inputmode="tab.selectedPlatform === 6 ? 'numeric' : undefined"
+              :maxlength="tab.selectedPlatform === 6 ? 32 : 200"
               class="douyinProduct-link-input"
-            />
-            <el-alert
-              v-if="tab.selectedPlatform === 6"
-              title="TikTok 商品链接字段已接入任务；因网页定位尚未提供，当前版本会记录告警但不会自动挂载商品。"
-              type="warning"
-              :closable="false"
-              show-icon
+              @input="value => onProductLinkInput(tab, value)"
             />
           </div>
 
@@ -1666,8 +1667,8 @@ const unifiedPublishInit = {
     tiktok: {
       tags: [], // 标签/话题（独立）
       isAigc: true, // AI 生成内容声明
-      productTitle: '', // 商品名称（等待网页定位）
-      productLink: '', // 商品链接（等待网页定位）
+      productTitle: '', // 商品展示名称
+      productLink: '', // TikTok Shop 商品 ID
     },
     // 百家号独有
     baijiahao: {
@@ -2273,6 +2274,14 @@ const executeUnifiedPublish = async (tab) => {
     return
   }
 
+  if (
+    tab.selectedPlatforms.includes(6) &&
+    !isValidTikTokProductId(tab.platformConfig.tiktok.productLink)
+  ) {
+    ElMessage.error('TikTok 商品 ID 只能包含数字')
+    return
+  }
+
   if (!canUnifiedPublish(tab)) {
     ElMessage.warning('请填写完整信息并选择至少一个平台')
     return
@@ -2574,6 +2583,23 @@ const onTestModeChange = (tab) => {
   }
 }
 
+const normalizeTikTokProductId = (value) => String(value ?? '').replace(/\D/g, '')
+
+const isValidTikTokProductId = (value) => {
+  const productId = String(value ?? '').trim()
+  return productId === '' || /^\d+$/.test(productId)
+}
+
+const setTikTokProductId = (tab, value) => {
+  tab.platformConfig.tiktok.productLink = normalizeTikTokProductId(value)
+}
+
+const onProductLinkInput = (tab, value) => {
+  if (tab.selectedPlatform === 6) {
+    tab.douyinProductLink = normalizeTikTokProductId(value)
+  }
+}
+
 const onPlatformChange = (tab) => {
   tab.selectedAccounts = []
   if (tab.selectedPlatform === 1 && tab.testMode) {
@@ -2606,6 +2632,14 @@ const confirmPublish = async (tab) => {
     ElMessage.error('请选择发布平台')
     tab.publishing = false
     throw new Error('请选择发布平台')
+  }
+  if (
+    tab.selectedPlatform === 6 &&
+    !isValidTikTokProductId(tab.douyinProductLink)
+  ) {
+    ElMessage.error('TikTok 商品 ID 只能包含数字')
+    tab.publishing = false
+    throw new Error('TikTok 商品 ID 只能包含数字')
   }
   if (tab.testMode && tab.selectedPlatform === 1) {
     ElMessage.error('小红书暂不支持测试模式')
