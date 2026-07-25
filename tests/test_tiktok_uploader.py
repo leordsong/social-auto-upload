@@ -27,6 +27,9 @@ from utils.files_times import generate_schedule_time_next_day
 
 
 class TiktokUploaderTests(unittest.TestCase):
+    def test_upload_page_matches_tiktok_studio_url(self):
+        self.assertEqual(TiktokVideo.upload_page, TIKTOK_UPLOAD_URL)
+
     def test_upload_url_targets_video_tab(self):
         self.assertEqual(
             TIKTOK_UPLOAD_URL,

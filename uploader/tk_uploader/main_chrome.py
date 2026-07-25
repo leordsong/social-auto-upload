@@ -193,6 +193,8 @@ async def get_tiktok_cookie(account_file):
 
 
 class TiktokVideo:
+    upload_page = TIKTOK_UPLOAD_URL
+
     def __init__(
         self,
         title,
