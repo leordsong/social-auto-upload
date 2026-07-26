@@ -487,40 +487,11 @@ class TiktokUploaderTests(unittest.TestCase):
             calls.mock_calls,
             [
                 call.cover(page),
-                call.product(page),
+                call.product(),
                 call.aigc(),
                 call.schedule(page, publish_date),
             ],
         )
-
-    def test_product_dialog_can_be_found_in_page_outside_upload_scope(self):
-        video = TiktokVideo("标题", "demo.mp4", [], 0, "cookie.json")
-        missing = MagicMock()
-        missing.count = AsyncMock(return_value=0)
-        missing_query = MagicMock()
-        missing_query.last = missing
-        video.locator_base = MagicMock()
-        video.locator_base.locator.return_value = missing_query
-
-        dialog = MagicMock()
-        dialog.count = AsyncMock(return_value=1)
-        dialog.is_visible = AsyncMock(return_value=True)
-        dialog_query = MagicMock()
-        dialog_query.last = dialog
-        page = MagicMock()
-        page.locator.return_value = dialog_query
-        page.frames = []
-
-        result = asyncio.run(
-            video._wait_for_visible_locator(
-                ADD_LINK_DIALOG,
-                page,
-                timeout=100,
-            )
-        )
-
-        self.assertIs(result, dialog)
-        page.locator.assert_called_once_with(ADD_LINK_DIALOG)
 
     def test_publish_uses_stable_data_e2e_button(self):
         video = TiktokVideo("标题", "demo.mp4", [], 0, "cookie.json")
@@ -676,11 +647,17 @@ class TiktokUploaderTests(unittest.TestCase):
         anchor_query = MagicMock()
         anchor_query.first = anchor
         add_dialog_query = MagicMock()
-        add_dialog_query.last = add_dialog
+        visible_add_dialogs = MagicMock()
+        visible_add_dialogs.last = add_dialog
+        add_dialog_query.filter.return_value = visible_add_dialogs
         selector_dialog_query = MagicMock()
-        selector_dialog_query.last = selector_dialog
+        visible_selector_dialogs = MagicMock()
+        visible_selector_dialogs.last = selector_dialog
+        selector_dialog_query.filter.return_value = visible_selector_dialogs
         name_dialog_query = MagicMock()
-        name_dialog_query.last = name_dialog
+        visible_name_dialogs = MagicMock()
+        visible_name_dialogs.last = name_dialog
+        name_dialog_query.filter.return_value = visible_name_dialogs
         video.locator_base = MagicMock()
 
         def locate(selector):
@@ -696,6 +673,9 @@ class TiktokUploaderTests(unittest.TestCase):
         result = asyncio.run(video.add_product_link())
 
         self.assertTrue(result)
+        add_dialog_query.filter.assert_called_once_with(visible=True)
+        selector_dialog_query.filter.assert_called_once_with(visible=True)
+        name_dialog_query.filter.assert_called_once_with(visible=True)
         add_entry.click.assert_awaited_once()
         first_next.click.assert_awaited_once()
         store_tab.click.assert_awaited_once()

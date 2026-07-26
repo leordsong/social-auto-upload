@@ -60,15 +60,20 @@ AIGC_CONFIRM_DIALOG = '[role="dialog"]'
 ANCHOR_CONTAINER = '[data-e2e="anchor_container"]'
 ADD_LINK_DIALOG = (
     '[role="dialog"][title="添加链接"], '
-    '[role="dialog"][title="Add link"]'
+    '[role="dialog"][title="Add link"], '
+    '[role="dialog"]:has-text("链接类型"), '
+    '[role="dialog"]:has-text("Link type")'
 )
 PRODUCT_DIALOG = (
     '[role="dialog"][title="添加商品链接"], '
-    '[role="dialog"][title="Add product link"]'
+    '[role="dialog"][title="Add product link"], '
+    '[role="dialog"]:has(label:has-text("商品名称")), '
+    '[role="dialog"]:has(label:has-text("Product name"))'
 )
 PRODUCT_SELECTOR_DIALOG = (
     '[role="dialog"].product-selector-modal[title="添加商品链接"], '
-    '[role="dialog"].product-selector-modal[title="Add product link"]'
+    '[role="dialog"].product-selector-modal[title="Add product link"], '
+    '[role="dialog"]:has(.product-search-input)'
 )
 PRODUCT_SEARCH_INPUT = (
     '.product-search-input input[type="text"], '
@@ -408,49 +413,7 @@ class TiktokVideo:
         await button.wait_for(state="visible", timeout=30_000)
         return button
 
-    async def _wait_for_visible_locator(
-        self,
-        selector,
-        page=None,
-        *,
-        timeout=30_000,
-        use_last=True,
-    ):
-        """Find a TikTok portal in the upload scope, page, or any frame."""
-        scopes = [self.locator_base]
-        if page is not None:
-            scopes.append(page)
-            try:
-                scopes.extend(page.frames)
-            except Exception:
-                pass
-
-        candidates = []
-        seen = set()
-        for scope in scopes:
-            if scope is None or id(scope) in seen:
-                continue
-            seen.add(id(scope))
-            try:
-                query = scope.locator(selector)
-                candidates.append(query.last if use_last else query.first)
-            except Exception:
-                continue
-
-        deadline = monotonic() + timeout / 1000
-        while monotonic() < deadline:
-            for candidate in candidates:
-                try:
-                    if await candidate.count() and await candidate.is_visible():
-                        return candidate
-                except Exception:
-                    continue
-            await asyncio.sleep(0.2)
-        raise PlaywrightTimeoutError(
-            f"TikTok element did not become visible in any page/frame: {selector}"
-        )
-
-    async def add_product_link(self, page=None):
+    async def add_product_link(self):
         """Attach a TikTok Shop product by product ID."""
         if not self.product_link:
             return True
@@ -472,9 +435,10 @@ class TiktokVideo:
                 ).first
             await add_entry.click()
 
-            add_dialog = await self._wait_for_visible_locator(
-                ADD_LINK_DIALOG, page
-            )
+            add_dialog = self.locator_base.locator(ADD_LINK_DIALOG).filter(
+                visible=True
+            ).last
+            await add_dialog.wait_for(state="visible", timeout=30_000)
 
             link_type = add_dialog.get_by_role("combobox").first
             if await link_type.count() and await link_type.is_visible():
@@ -492,9 +456,10 @@ class TiktokVideo:
             await next_button.click()
             await add_dialog.wait_for(state="hidden", timeout=30_000)
 
-            selector_dialog = await self._wait_for_visible_locator(
-                PRODUCT_SELECTOR_DIALOG, page
-            )
+            selector_dialog = self.locator_base.locator(
+                PRODUCT_SELECTOR_DIALOG
+            ).filter(visible=True).last
+            await selector_dialog.wait_for(state="visible", timeout=30_000)
 
             store_tab = selector_dialog.get_by_role(
                 "button",
@@ -526,9 +491,10 @@ class TiktokVideo:
             await next_button.click()
             await selector_dialog.wait_for(state="hidden", timeout=30_000)
 
-            name_dialog = await self._wait_for_visible_locator(
-                PRODUCT_DIALOG, page
-            )
+            name_dialog = self.locator_base.locator(PRODUCT_DIALOG).filter(
+                visible=True
+            ).last
+            await name_dialog.wait_for(state="visible", timeout=30_000)
             if self.product_title:
                 name_input = name_dialog.get_by_label(
                     re.compile(r"^(商品名称|Product name)$", re.I)
@@ -817,7 +783,7 @@ class TiktokVideo:
                 f"[+] Uploading TikTok cover: {self.thumbnail_path}"
             )
             await self.upload_thumbnails(page)
-        await self.add_product_link(page)
+        await self.add_product_link()
         if self.is_aigc:
             await self.set_aigc_content()
         if self.publish_date and not self.test_mode:
