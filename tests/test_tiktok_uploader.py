@@ -14,6 +14,8 @@ from uploader.tk_uploader.main_chrome import (
     COVER_EDITOR,
     COVER_ENTRY,
     COVER_INPUT,
+    FLOATING_MODAL,
+    FLOATING_UI_PORTAL,
     POST_BUTTON,
     PRODUCT_DIALOG,
     PRODUCT_ROW,
@@ -31,6 +33,7 @@ from uploader.tk_uploader.main_chrome import (
     TiktokVideo,
     capture_ready_tiktok_qr,
 )
+from uploader.tk_uploader.tk_config import Tk_Locator
 from myUtils.postVideo import post_video_tiktok
 from utils.files_times import generate_schedule_time_next_day
 
@@ -53,12 +56,15 @@ class TiktokUploaderTests(unittest.TestCase):
         self.assertIn(".cover-editor-container", COVER_EDITOR)
         self.assertIn('aria-label="Upload cover image"', COVER_INPUT)
         self.assertEqual(AIGC_CONTAINER, '[data-e2e="aigc_container"]')
-        self.assertEqual(AIGC_CONFIRM_DIALOG, '[role="dialog"]')
+        self.assertEqual(FLOATING_UI_PORTAL, "div.data-floating-ui-portal")
+        self.assertIn("div.TUXModal-overlay", FLOATING_MODAL)
+        self.assertEqual(AIGC_CONFIRM_DIALOG, FLOATING_MODAL)
         self.assertEqual(
             ADVANCED_SETTINGS,
             '[data-e2e="advanced_settings_container"]',
         )
         self.assertEqual(ANCHOR_CONTAINER, '[data-e2e="anchor_container"]')
+        self.assertIn("data-floating-ui-portal", ADD_LINK_DIALOG)
         self.assertIn('[role="dialog"]', ADD_LINK_DIALOG)
         self.assertIn("product-selector-modal", PRODUCT_SELECTOR_DIALOG)
         self.assertEqual(PRODUCT_ROW, "tr.product-tb-row")
@@ -72,6 +78,25 @@ class TiktokUploaderTests(unittest.TestCase):
         self.assertIn("[readonly]", SCHEDULE_INPUTS)
         self.assertEqual(TIME_PICKER, ".tiktok-timepicker-time-picker-container")
         self.assertEqual(CALENDAR_PICKER, "div.calendar-wrapper")
+
+    def test_iframe_upload_form_keeps_dialogs_on_top_level_body(self):
+        video = TiktokVideo("标题", "demo.mp4", [], 0, "cookie.json")
+        iframe = MagicMock()
+        iframe.count = AsyncMock(return_value=1)
+        body = MagicMock()
+        frame = MagicMock()
+        page = MagicMock()
+        page.locator.side_effect = lambda selector: (
+            iframe if selector == Tk_Locator.tk_iframe else body
+        )
+        page.frame_locator.return_value = frame
+
+        asyncio.run(video.choose_base_locator(page))
+
+        self.assertIs(video.locator_base, frame)
+        self.assertIs(video.dialog_base, body)
+        page.locator.assert_any_call(Tk_Locator.default)
+        page.frame_locator.assert_called_once_with(Tk_Locator.tk_iframe)
 
     def test_qr_capture_waits_for_loading_mask_then_uses_real_canvas(self):
         loading_mask = MagicMock()
@@ -381,18 +406,20 @@ class TiktokUploaderTests(unittest.TestCase):
         dialogs.filter.return_value = filtered_dialogs
 
         video.locator_base = MagicMock()
-        video.locator_base.locator.side_effect = lambda selector: {
-            AIGC_CONTAINER: container_query,
-            AIGC_CONFIRM_DIALOG: dialogs,
-        }.get(selector, more_query)
+        video.locator_base.locator.side_effect = lambda selector: (
+            container_query if selector == AIGC_CONTAINER else more_query
+        )
+        video.dialog_base = MagicMock()
+        video.dialog_base.locator.return_value = dialogs
 
         asyncio.run(video.set_aigc_content())
 
         more.click.assert_awaited_once()
         switch.click.assert_awaited_once_with(force=True)
+        video.dialog_base.locator.assert_called_once_with(AIGC_CONFIRM_DIALOG)
         missing_dialog.wait_for.assert_awaited_once_with(
             state="visible",
-            timeout=5_000,
+            timeout=15_000,
         )
 
     def test_aigc_confirmation_dialog_clicks_enable(self):
@@ -419,42 +446,19 @@ class TiktokUploaderTests(unittest.TestCase):
         dialogs = MagicMock()
         dialogs.filter.return_value = filtered_dialogs
         video.locator_base = MagicMock()
-        video.locator_base.locator.return_value = dialogs
+        video.dialog_base = MagicMock()
+        video.dialog_base.locator.return_value = dialogs
 
         result = asyncio.run(video.confirm_aigc_dialog())
 
         self.assertTrue(result)
+        video.dialog_base.locator.assert_called_once_with(AIGC_CONFIRM_DIALOG)
         confirm.click.assert_awaited_once()
         self.assertEqual(
             dialog.wait_for.await_args_list,
             [
-                call(state="visible", timeout=5_000),
+                call(state="visible", timeout=15_000),
                 call(state="hidden", timeout=30_000),
-            ],
-        )
-
-    def test_aigc_confirmation_handles_multiple_dialogs_in_sequence(self):
-        video = TiktokVideo(
-            "标题",
-            "demo.mp4",
-            [],
-            0,
-            "cookie.json",
-            is_aigc=True,
-        )
-        video.confirm_aigc_dialog = AsyncMock(
-            side_effect=[True, True, False]
-        )
-
-        result = asyncio.run(video.confirm_aigc_dialogs())
-
-        self.assertEqual(result, 2)
-        self.assertEqual(
-            video.confirm_aigc_dialog.await_args_list,
-            [
-                call(timeout=5_000),
-                call(timeout=2_000),
-                call(timeout=2_000),
             ],
         )
 
@@ -659,20 +663,30 @@ class TiktokUploaderTests(unittest.TestCase):
         visible_name_dialogs.last = name_dialog
         name_dialog_query.filter.return_value = visible_name_dialogs
         video.locator_base = MagicMock()
+        video.locator_base.locator.return_value = anchor_query
+        video.dialog_base = MagicMock()
 
-        def locate(selector):
+        def locate_dialog(selector):
             return {
-                ANCHOR_CONTAINER: anchor_query,
                 ADD_LINK_DIALOG: add_dialog_query,
                 PRODUCT_SELECTOR_DIALOG: selector_dialog_query,
                 PRODUCT_DIALOG: name_dialog_query,
             }[selector]
 
-        video.locator_base.locator.side_effect = locate
+        video.dialog_base.locator.side_effect = locate_dialog
 
         result = asyncio.run(video.add_product_link())
 
         self.assertTrue(result)
+        video.locator_base.locator.assert_called_once_with(ANCHOR_CONTAINER)
+        self.assertEqual(
+            video.dialog_base.locator.call_args_list,
+            [
+                call(ADD_LINK_DIALOG),
+                call(PRODUCT_SELECTOR_DIALOG),
+                call(PRODUCT_DIALOG),
+            ],
+        )
         add_dialog_query.filter.assert_called_once_with(visible=True)
         selector_dialog_query.filter.assert_called_once_with(visible=True)
         name_dialog_query.filter.assert_called_once_with(visible=True)

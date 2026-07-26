@@ -56,24 +56,29 @@ COVER_INPUT = (
 )
 AIGC_CONTAINER = '[data-e2e="aigc_container"]'
 ADVANCED_SETTINGS = '[data-e2e="advanced_settings_container"]'
-AIGC_CONFIRM_DIALOG = '[role="dialog"]'
+FLOATING_UI_PORTAL = "div.data-floating-ui-portal"
+FLOATING_MODAL = (
+    f"{FLOATING_UI_PORTAL} > div.TUXModal-overlay "
+    f'> div.TUXModal[role="dialog"]'
+)
+AIGC_CONFIRM_DIALOG = FLOATING_MODAL
 ANCHOR_CONTAINER = '[data-e2e="anchor_container"]'
 ADD_LINK_DIALOG = (
-    '[role="dialog"][title="添加链接"], '
-    '[role="dialog"][title="Add link"], '
-    '[role="dialog"]:has-text("链接类型"), '
-    '[role="dialog"]:has-text("Link type")'
+    f'{FLOATING_MODAL}[title="添加链接"], '
+    f'{FLOATING_MODAL}[title="Add link"], '
+    f'{FLOATING_MODAL}:has-text("链接类型"), '
+    f'{FLOATING_MODAL}:has-text("Link type")'
 )
 PRODUCT_DIALOG = (
-    '[role="dialog"][title="添加商品链接"], '
-    '[role="dialog"][title="Add product link"], '
-    '[role="dialog"]:has(label:has-text("商品名称")), '
-    '[role="dialog"]:has(label:has-text("Product name"))'
+    f'{FLOATING_MODAL}[title="添加商品链接"], '
+    f'{FLOATING_MODAL}[title="Add product link"], '
+    f'{FLOATING_MODAL}:has(label:has-text("商品名称")), '
+    f'{FLOATING_MODAL}:has(label:has-text("Product name"))'
 )
 PRODUCT_SELECTOR_DIALOG = (
-    '[role="dialog"].product-selector-modal[title="添加商品链接"], '
-    '[role="dialog"].product-selector-modal[title="Add product link"], '
-    '[role="dialog"]:has(.product-search-input)'
+    f'{FLOATING_MODAL}.product-selector-modal[title="添加商品链接"], '
+    f'{FLOATING_MODAL}.product-selector-modal[title="Add product link"], '
+    f"{FLOATING_MODAL}:has(.product-search-input)"
 )
 PRODUCT_SEARCH_INPUT = (
     '.product-search-input input[type="text"], '
@@ -252,6 +257,7 @@ class TiktokVideo:
         self.account_file = str(account_file)
         self.headless = get_local_chrome_headless()
         self.locator_base = None
+        self.dialog_base = None
 
     @staticmethod
     def _normalize_tags(tags):
@@ -277,11 +283,14 @@ class TiktokVideo:
         return caption
 
     async def choose_base_locator(self, page):
+        # TikTok mounts TUXModal dialogs in a floating portal under the
+        # top-level body, even when the upload form itself lives in an iframe.
+        self.dialog_base = page.locator(Tk_Locator.default)
         iframe = page.locator(Tk_Locator.tk_iframe)
         if await iframe.count():
             self.locator_base = page.frame_locator(Tk_Locator.tk_iframe)
         else:
-            self.locator_base = page.locator(Tk_Locator.default)
+            self.locator_base = self.dialog_base
 
     async def upload_video_file(self):
         video_input = self.locator_base.locator(VIDEO_INPUT).first
@@ -354,11 +363,12 @@ class TiktokVideo:
         if (checked == "true") != self.is_aigc:
             await switch.click(force=True)
             if self.is_aigc:
-                await self.confirm_aigc_dialogs()
+                await self.confirm_aigc_dialog()
 
-    async def confirm_aigc_dialog(self, timeout=5_000):
+    async def confirm_aigc_dialog(self, timeout=15_000):
         """Confirm TikTok's optional first-time AI-content disclosure dialog."""
-        dialogs = self.locator_base.locator(AIGC_CONFIRM_DIALOG)
+        dialog_base = self.dialog_base or self.locator_base
+        dialogs = dialog_base.locator(AIGC_CONFIRM_DIALOG)
         dialog = dialogs.filter(
             has_text=re.compile(
                 r"(标记\s*AI\s*生成的内容|Label AI-generated content|"
@@ -388,16 +398,6 @@ class TiktokVideo:
         await confirm.click()
         await dialog.wait_for(state="hidden", timeout=30_000)
         return True
-
-    async def confirm_aigc_dialogs(self, max_dialogs=3):
-        """Handle a short sequence of optional AI disclosure dialogs."""
-        confirmed = 0
-        for index in range(max_dialogs):
-            timeout = 5_000 if index == 0 else 2_000
-            if not await self.confirm_aigc_dialog(timeout=timeout):
-                break
-            confirmed += 1
-        return confirmed
 
     @staticmethod
     def _product_search_value(value):
@@ -435,7 +435,8 @@ class TiktokVideo:
                 ).first
             await add_entry.click()
 
-            add_dialog = self.locator_base.locator(ADD_LINK_DIALOG).filter(
+            dialog_base = self.dialog_base or self.locator_base
+            add_dialog = dialog_base.locator(ADD_LINK_DIALOG).filter(
                 visible=True
             ).last
             await add_dialog.wait_for(state="visible", timeout=30_000)
@@ -445,7 +446,7 @@ class TiktokVideo:
                 selected_type = await link_type.inner_text()
                 if not re.search(r"(商品|Product)", selected_type, re.I):
                     await link_type.click()
-                    product_option = self.locator_base.get_by_role(
+                    product_option = dialog_base.get_by_role(
                         "option", name=re.compile(r"^(商品|Product)$", re.I)
                     ).first
                     await product_option.click()
@@ -456,7 +457,7 @@ class TiktokVideo:
             await next_button.click()
             await add_dialog.wait_for(state="hidden", timeout=30_000)
 
-            selector_dialog = self.locator_base.locator(
+            selector_dialog = dialog_base.locator(
                 PRODUCT_SELECTOR_DIALOG
             ).filter(visible=True).last
             await selector_dialog.wait_for(state="visible", timeout=30_000)
@@ -491,7 +492,7 @@ class TiktokVideo:
             await next_button.click()
             await selector_dialog.wait_for(state="hidden", timeout=30_000)
 
-            name_dialog = self.locator_base.locator(PRODUCT_DIALOG).filter(
+            name_dialog = dialog_base.locator(PRODUCT_DIALOG).filter(
                 visible=True
             ).last
             await name_dialog.wait_for(state="visible", timeout=30_000)
