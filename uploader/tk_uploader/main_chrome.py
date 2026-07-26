@@ -87,6 +87,15 @@ TIME_PICKER = ".tiktok-timepicker-time-picker-container"
 CALENDAR_PICKER = "div.calendar-wrapper"
 QR_CODE_CANVAS = '[data-e2e="qr-code"] canvas'
 QR_LOADING_MASK = 'div[class*="DivCodeMask"]'
+MUSIC_CHECKING_TEXT = "正在检查。这需要大概 30 秒。"
+MUSIC_DONE_TEXT = "未发现问题。"
+CONTENT_CHECKING_TEXT = "正在检查。此过程大约需要 10 分钟。较长的视频可能需要花费更多时间。"
+CONTENT_DONE_TEXTS = (
+    "未发现问题。但请注意",
+    "内容可能受限",
+    "出错了，请稍后重试",
+    "今日检查次数已达上限",
+)
 
 
 def _browser_options(headless):
@@ -532,6 +541,47 @@ class TiktokVideo:
             await asyncio.sleep(2)
         raise TimeoutError("TikTok video processing timed out before the Post button was enabled")
 
+    async def _wait_for_review_check(self, page, label, checking_text, done_texts, timeout):
+        deadline = monotonic() + timeout
+        checking_locator = page.get_by_text(checking_text, exact=False).first
+
+        while monotonic() < deadline:
+            if await checking_locator.count() and await checking_locator.is_visible():
+                await asyncio.sleep(2)
+                continue
+
+            for done_text in done_texts:
+                done_locator = page.get_by_text(done_text, exact=False).first
+                if await done_locator.count() and await done_locator.is_visible():
+                    tiktok_logger.info(f"[+] TikTok {label} completed: {done_text}")
+                    return done_text
+
+            await asyncio.sleep(2)
+
+        raise TimeoutError(f"TikTok {label} timed out before completion")
+
+    async def wait_for_review_checks(self, page, timeout=900):
+        """Wait for TikTok music copyright and content checks to finish."""
+        deadline = monotonic() + timeout
+
+        remaining = max(1, int(deadline - monotonic()))
+        await self._wait_for_review_check(
+            page,
+            label="music copyright check",
+            checking_text=MUSIC_CHECKING_TEXT,
+            done_texts=(MUSIC_DONE_TEXT,),
+            timeout=min(180, remaining),
+        )
+
+        remaining = max(1, int(deadline - monotonic()))
+        await self._wait_for_review_check(
+            page,
+            label="content check",
+            checking_text=CONTENT_CHECKING_TEXT,
+            done_texts=CONTENT_DONE_TEXTS,
+            timeout=remaining,
+        )
+
     @staticmethod
     def _parse_calendar_month(value):
         text = re.sub(r"\s+", "", (value or "")).lower()
@@ -797,6 +847,7 @@ class TiktokVideo:
             await self.add_title_tags(page)
             await self.detect_upload_status()
             await self.prepare_post_settings(page)
+            await self.wait_for_review_checks(page)
 
             if self.test_mode:
                 await self.click_discard(page)
