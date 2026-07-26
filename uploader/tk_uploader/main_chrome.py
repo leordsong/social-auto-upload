@@ -361,17 +361,54 @@ class TiktokVideo:
     async def confirm_aigc_dialog(self, timeout=15_000):
         """Click the optional AI-disclosure confirmation without locating its modal."""
         dialog_base = self.dialog_base or self.locator_base
-        confirm = dialog_base.get_by_role(
-            "button",
-            name=re.compile(r"^(开启|Turn on|Enable)$", re.I),
-        ).last
-        try:
-            await confirm.wait_for(state="visible", timeout=timeout)
-        except PlaywrightTimeoutError:
-            return False
+        patterns = re.compile(r"^(开启|Turn on|Enable)$", re.I)
 
-        await confirm.click()
-        return True
+        # Primary: role + accessible name
+        try:
+            confirm = dialog_base.get_by_role("button", name=patterns).last
+            if await confirm.count():
+                await confirm.wait_for(state="visible", timeout=timeout)
+                aria_disabled = await confirm.get_attribute("aria-disabled")
+                data_disabled = await confirm.get_attribute("data-disabled")
+                if aria_disabled == "true" or data_disabled == "true":
+                    return False
+                await confirm.click()
+                return True
+        except PlaywrightTimeoutError:
+            pass
+
+        # Fallback 1: text-based button search within the dialog base
+        try:
+            alt = dialog_base.locator(
+                "button:has-text('开启'), button:has-text('Turn on'), button:has-text('Enable')"
+            ).first
+            if await alt.count():
+                await alt.wait_for(state="visible", timeout=timeout)
+                aria_disabled = await alt.get_attribute("aria-disabled")
+                data_disabled = await alt.get_attribute("data-disabled")
+                if aria_disabled == "true" or data_disabled == "true":
+                    return False
+                await alt.click()
+                return True
+        except PlaywrightTimeoutError:
+            pass
+
+        # Fallback 2: try the locator_base (could be an iframe) if different
+        try:
+            if self.locator_base is not None and self.locator_base is not dialog_base:
+                frame_btn = self.locator_base.get_by_role("button", name=patterns).first
+                if await frame_btn.count():
+                    await frame_btn.wait_for(state="visible", timeout=timeout)
+                    aria_disabled = await frame_btn.get_attribute("aria-disabled")
+                    data_disabled = await frame_btn.get_attribute("data-disabled")
+                    if aria_disabled == "true" or data_disabled == "true":
+                        return False
+                    await frame_btn.click()
+                    return True
+        except PlaywrightTimeoutError:
+            pass
+
+        return False
 
     @staticmethod
     def _product_search_value(value):
@@ -415,24 +452,20 @@ class TiktokVideo:
             )
             await next_button.click()
 
-            selector_dialog = dialog_base.locator(
-                PRODUCT_SELECTOR_DIALOG
-            ).filter(visible=True).last
-            await selector_dialog.wait_for(state="visible", timeout=30_000)
-
-            store_tab = selector_dialog.get_by_role(
+            # Search for selector elements directly on the dialog base
+            store_tab = dialog_base.get_by_role(
                 "button",
                 name=re.compile(r"^(我的商店|My (shop|store))$", re.I),
             ).first
             if await store_tab.count() and await store_tab.is_visible():
                 await store_tab.click()
 
-            search_input = selector_dialog.locator(PRODUCT_SEARCH_INPUT).first
+            search_input = dialog_base.locator(PRODUCT_SEARCH_INPUT).first
             await search_input.wait_for(state="visible", timeout=30_000)
             await search_input.fill(product_id)
             await search_input.press("Enter")
 
-            matching_rows = selector_dialog.locator(PRODUCT_ROW).filter(
+            matching_rows = dialog_base.locator(PRODUCT_ROW).filter(
                 has_text=product_id
             )
             radio = matching_rows.locator(PRODUCT_SELECTABLE_RADIO).first
@@ -445,27 +478,22 @@ class TiktokVideo:
             await radio.click(force=True)
 
             next_button = await self._modal_button(
-                selector_dialog, ("下一步", "Next")
+                dialog_base, ("下一步", "Next")
             )
             await next_button.click()
-            await selector_dialog.wait_for(state="hidden", timeout=30_000)
 
-            name_dialog = dialog_base.locator(PRODUCT_DIALOG).filter(
-                visible=True
-            ).last
-            await name_dialog.wait_for(state="visible", timeout=30_000)
+            # Wait for the product name input to appear somewhere on the page
+            name_input = dialog_base.get_by_label(
+                re.compile(r"^(商品名称|Product name)$", re.I)
+            ).first
+            await name_input.wait_for(state="visible", timeout=30_000)
             if self.product_title:
-                name_input = name_dialog.get_by_label(
-                    re.compile(r"^(商品名称|Product name)$", re.I)
-                ).first
-                await name_input.wait_for(state="visible", timeout=30_000)
                 await name_input.fill(self.product_title[:30])
 
             confirm_button = await self._modal_button(
-                name_dialog, ("添加", "Add")
+                dialog_base, ("添加", "Add")
             )
             await confirm_button.click()
-            await name_dialog.wait_for(state="hidden", timeout=30_000)
             tiktok_logger.info(f"[+] TikTok product attached: {product_id}")
             return True
         except Exception as exc:
