@@ -4,9 +4,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from uploader.tk_uploader.main_chrome import (
-    ADD_LINK_DIALOG,
     ADVANCED_SETTINGS,
-    AIGC_CONFIRM_DIALOG,
     AIGC_CONTAINER,
     ANCHOR_CONTAINER,
     CALENDAR_PICKER,
@@ -58,14 +56,11 @@ class TiktokUploaderTests(unittest.TestCase):
         self.assertEqual(AIGC_CONTAINER, '[data-e2e="aigc_container"]')
         self.assertEqual(FLOATING_UI_PORTAL, "div.data-floating-ui-portal")
         self.assertIn("div.TUXModal-overlay", FLOATING_MODAL)
-        self.assertEqual(AIGC_CONFIRM_DIALOG, FLOATING_MODAL)
         self.assertEqual(
             ADVANCED_SETTINGS,
             '[data-e2e="advanced_settings_container"]',
         )
         self.assertEqual(ANCHOR_CONTAINER, '[data-e2e="anchor_container"]')
-        self.assertIn("data-floating-ui-portal", ADD_LINK_DIALOG)
-        self.assertIn('[role="dialog"]', ADD_LINK_DIALOG)
         self.assertIn("product-selector-modal", PRODUCT_SELECTOR_DIALOG)
         self.assertEqual(PRODUCT_ROW, "tr.product-tb-row")
         self.assertNotIn("jsx-", PRODUCT_SEARCH_INPUT)
@@ -396,28 +391,26 @@ class TiktokUploaderTests(unittest.TestCase):
         more_query = MagicMock()
         more_query.first = more
 
-        missing_dialog = MagicMock()
-        missing_dialog.wait_for = AsyncMock(
+        missing_confirm = MagicMock()
+        missing_confirm.wait_for = AsyncMock(
             side_effect=PlaywrightTimeoutError("not shown")
         )
-        filtered_dialogs = MagicMock()
-        filtered_dialogs.last = missing_dialog
-        dialogs = MagicMock()
-        dialogs.filter.return_value = filtered_dialogs
+        confirm_query = MagicMock()
+        confirm_query.last = missing_confirm
 
         video.locator_base = MagicMock()
         video.locator_base.locator.side_effect = lambda selector: (
             container_query if selector == AIGC_CONTAINER else more_query
         )
         video.dialog_base = MagicMock()
-        video.dialog_base.locator.return_value = dialogs
+        video.dialog_base.get_by_role.return_value = confirm_query
 
         asyncio.run(video.set_aigc_content())
 
         more.click.assert_awaited_once()
         switch.click.assert_awaited_once_with(force=True)
-        video.dialog_base.locator.assert_called_once_with(AIGC_CONFIRM_DIALOG)
-        missing_dialog.wait_for.assert_awaited_once_with(
+        video.dialog_base.get_by_role.assert_called_once()
+        missing_confirm.wait_for.assert_awaited_once_with(
             state="visible",
             timeout=15_000,
         )
@@ -432,35 +425,24 @@ class TiktokUploaderTests(unittest.TestCase):
             is_aigc=True,
         )
         confirm = MagicMock()
-        confirm.count = AsyncMock(return_value=1)
         confirm.wait_for = AsyncMock()
         confirm.click = AsyncMock()
         confirm_query = MagicMock()
         confirm_query.last = confirm
 
-        dialog = MagicMock()
-        dialog.wait_for = AsyncMock()
-        dialog.get_by_role.return_value = confirm_query
-        filtered_dialogs = MagicMock()
-        filtered_dialogs.last = dialog
-        dialogs = MagicMock()
-        dialogs.filter.return_value = filtered_dialogs
         video.locator_base = MagicMock()
         video.dialog_base = MagicMock()
-        video.dialog_base.locator.return_value = dialogs
+        video.dialog_base.get_by_role.return_value = confirm_query
 
         result = asyncio.run(video.confirm_aigc_dialog())
 
         self.assertTrue(result)
-        video.dialog_base.locator.assert_called_once_with(AIGC_CONFIRM_DIALOG)
-        confirm.click.assert_awaited_once()
-        self.assertEqual(
-            dialog.wait_for.await_args_list,
-            [
-                call(state="visible", timeout=15_000),
-                call(state="hidden", timeout=30_000),
-            ],
+        video.dialog_base.get_by_role.assert_called_once()
+        confirm.wait_for.assert_awaited_once_with(
+            state="visible",
+            timeout=15_000,
         )
+        confirm.click.assert_awaited_once()
 
     def test_product_link_is_added_before_aigc_setting(self):
         publish_date = datetime(2026, 7, 26, 18, 0)
@@ -568,26 +550,11 @@ class TiktokUploaderTests(unittest.TestCase):
         anchor.wait_for = AsyncMock()
         anchor.get_by_role.return_value = add_entry_query
 
-        link_type = MagicMock()
-        link_type.count = AsyncMock(return_value=1)
-        link_type.is_visible = AsyncMock(return_value=True)
-        link_type.inner_text = AsyncMock(return_value="商品")
-        link_type_query = MagicMock()
-        link_type_query.first = link_type
         first_next = MagicMock()
         first_next.wait_for = AsyncMock()
         first_next.click = AsyncMock()
         first_next_query = MagicMock()
         first_next_query.first = first_next
-        add_dialog = MagicMock()
-        add_dialog.count = AsyncMock(return_value=1)
-        add_dialog.is_visible = AsyncMock(return_value=True)
-        add_dialog.wait_for = AsyncMock()
-        add_dialog.get_by_role.side_effect = (
-            lambda role, **kwargs: link_type_query
-            if role == "combobox"
-            else first_next_query
-        )
 
         store_tab = MagicMock()
         store_tab.count = AsyncMock(return_value=1)
@@ -650,10 +617,6 @@ class TiktokUploaderTests(unittest.TestCase):
 
         anchor_query = MagicMock()
         anchor_query.first = anchor
-        add_dialog_query = MagicMock()
-        visible_add_dialogs = MagicMock()
-        visible_add_dialogs.last = add_dialog
-        add_dialog_query.filter.return_value = visible_add_dialogs
         selector_dialog_query = MagicMock()
         visible_selector_dialogs = MagicMock()
         visible_selector_dialogs.last = selector_dialog
@@ -665,10 +628,10 @@ class TiktokUploaderTests(unittest.TestCase):
         video.locator_base = MagicMock()
         video.locator_base.locator.return_value = anchor_query
         video.dialog_base = MagicMock()
+        video.dialog_base.get_by_role.return_value = first_next_query
 
         def locate_dialog(selector):
             return {
-                ADD_LINK_DIALOG: add_dialog_query,
                 PRODUCT_SELECTOR_DIALOG: selector_dialog_query,
                 PRODUCT_DIALOG: name_dialog_query,
             }[selector]
@@ -682,12 +645,10 @@ class TiktokUploaderTests(unittest.TestCase):
         self.assertEqual(
             video.dialog_base.locator.call_args_list,
             [
-                call(ADD_LINK_DIALOG),
                 call(PRODUCT_SELECTOR_DIALOG),
                 call(PRODUCT_DIALOG),
             ],
         )
-        add_dialog_query.filter.assert_called_once_with(visible=True)
         selector_dialog_query.filter.assert_called_once_with(visible=True)
         name_dialog_query.filter.assert_called_once_with(visible=True)
         add_entry.click.assert_awaited_once()

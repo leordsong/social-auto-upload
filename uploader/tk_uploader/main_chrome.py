@@ -61,14 +61,7 @@ FLOATING_MODAL = (
     f"{FLOATING_UI_PORTAL} > div.TUXModal-overlay "
     f'> div.TUXModal[role="dialog"]'
 )
-AIGC_CONFIRM_DIALOG = FLOATING_MODAL
 ANCHOR_CONTAINER = '[data-e2e="anchor_container"]'
-ADD_LINK_DIALOG = (
-    f'{FLOATING_MODAL}[title="添加链接"], '
-    f'{FLOATING_MODAL}[title="Add link"], '
-    f'{FLOATING_MODAL}:has-text("链接类型"), '
-    f'{FLOATING_MODAL}:has-text("Link type")'
-)
 PRODUCT_DIALOG = (
     f'{FLOATING_MODAL}[title="添加商品链接"], '
     f'{FLOATING_MODAL}[title="Add product link"], '
@@ -366,37 +359,18 @@ class TiktokVideo:
                 await self.confirm_aigc_dialog()
 
     async def confirm_aigc_dialog(self, timeout=15_000):
-        """Confirm TikTok's optional first-time AI-content disclosure dialog."""
+        """Click the optional AI-disclosure confirmation without locating its modal."""
         dialog_base = self.dialog_base or self.locator_base
-        dialogs = dialog_base.locator(AIGC_CONFIRM_DIALOG)
-        dialog = dialogs.filter(
-            has_text=re.compile(
-                r"(标记\s*AI\s*生成的内容|Label AI-generated content|"
-                r"AI-generated content)",
-                re.I,
-            )
+        confirm = dialog_base.get_by_role(
+            "button",
+            name=re.compile(r"^(开启|Turn on|Enable)$", re.I),
         ).last
         try:
-            await dialog.wait_for(state="visible", timeout=timeout)
+            await confirm.wait_for(state="visible", timeout=timeout)
         except PlaywrightTimeoutError:
             return False
 
-        confirm = dialog.get_by_role(
-            "button",
-            name=re.compile(
-                r"^(开启|确认|继续|知道了|Turn on|Enable|Confirm|"
-                r"Continue|Got it)$",
-                re.I,
-            ),
-        ).last
-        if not await confirm.count():
-            confirm = dialog.locator(
-                'button[data-type="primary"], '
-                'button.Button__root--type-primary'
-            ).last
-        await confirm.wait_for(state="visible", timeout=10_000)
         await confirm.click()
-        await dialog.wait_for(state="hidden", timeout=30_000)
         return True
 
     @staticmethod
@@ -436,26 +410,10 @@ class TiktokVideo:
             await add_entry.click()
 
             dialog_base = self.dialog_base or self.locator_base
-            add_dialog = dialog_base.locator(ADD_LINK_DIALOG).filter(
-                visible=True
-            ).last
-            await add_dialog.wait_for(state="visible", timeout=30_000)
-
-            link_type = add_dialog.get_by_role("combobox").first
-            if await link_type.count() and await link_type.is_visible():
-                selected_type = await link_type.inner_text()
-                if not re.search(r"(商品|Product)", selected_type, re.I):
-                    await link_type.click()
-                    product_option = dialog_base.get_by_role(
-                        "option", name=re.compile(r"^(商品|Product)$", re.I)
-                    ).first
-                    await product_option.click()
-
             next_button = await self._modal_button(
-                add_dialog, ("下一步", "Next")
+                dialog_base, ("下一步", "Next")
             )
             await next_button.click()
-            await add_dialog.wait_for(state="hidden", timeout=30_000)
 
             selector_dialog = dialog_base.locator(
                 PRODUCT_SELECTOR_DIALOG
