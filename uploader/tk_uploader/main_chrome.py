@@ -349,9 +349,9 @@ class TiktokVideo:
         if (checked == "true") != self.is_aigc:
             await switch.click(force=True)
             if self.is_aigc:
-                await self.confirm_aigc_dialog()
+                await self.confirm_aigc_dialogs()
 
-    async def confirm_aigc_dialog(self):
+    async def confirm_aigc_dialog(self, timeout=5_000):
         """Confirm TikTok's optional first-time AI-content disclosure dialog."""
         dialogs = self.locator_base.locator(AIGC_CONFIRM_DIALOG)
         dialog = dialogs.filter(
@@ -362,24 +362,37 @@ class TiktokVideo:
             )
         ).last
         try:
-            await dialog.wait_for(state="visible", timeout=5_000)
+            await dialog.wait_for(state="visible", timeout=timeout)
         except PlaywrightTimeoutError:
             return False
 
         confirm = dialog.get_by_role(
             "button",
-            name=re.compile(r"^(开启|Turn on|Enable)$", re.I),
+            name=re.compile(
+                r"^(开启|确认|继续|知道了|Turn on|Enable|Confirm|"
+                r"Continue|Got it)$",
+                re.I,
+            ),
         ).last
         if not await confirm.count():
             confirm = dialog.locator(
-                "button:has-text('开启'), "
-                "button:has-text('Turn on'), "
-                "button:has-text('Enable')"
+                'button[data-type="primary"], '
+                'button.Button__root--type-primary'
             ).last
         await confirm.wait_for(state="visible", timeout=10_000)
         await confirm.click()
         await dialog.wait_for(state="hidden", timeout=30_000)
         return True
+
+    async def confirm_aigc_dialogs(self, max_dialogs=3):
+        """Handle a short sequence of optional AI disclosure dialogs."""
+        confirmed = 0
+        for index in range(max_dialogs):
+            timeout = 5_000 if index == 0 else 2_000
+            if not await self.confirm_aigc_dialog(timeout=timeout):
+                break
+            confirmed += 1
+        return confirmed
 
     @staticmethod
     def _product_search_value(value):
@@ -755,6 +768,18 @@ class TiktokVideo:
             return match.group(1) if match else None
         return None
 
+    async def prepare_post_settings(self, page):
+        if self.thumbnail_path:
+            tiktok_logger.info(
+                f"[+] Uploading TikTok cover: {self.thumbnail_path}"
+            )
+            await self.upload_thumbnails(page)
+        await self.add_product_link()
+        if self.is_aigc:
+            await self.set_aigc_content()
+        if self.publish_date and not self.test_mode:
+            await self.set_schedule_time(page, self.publish_date)
+
     async def upload(self, playwright: Playwright):
         tiktok_logger.info(
             f"[+] Launching TikTok upload browser (headless={self.headless})"
@@ -775,15 +800,7 @@ class TiktokVideo:
             await self.upload_video_file()
             await self.add_title_tags(page)
             await self.detect_upload_status()
-
-            if self.thumbnail_path:
-                tiktok_logger.info(f"[+] Uploading TikTok cover: {self.thumbnail_path}")
-                await self.upload_thumbnails(page)
-            if self.is_aigc:
-                await self.set_aigc_content()
-            await self.add_product_link()
-            if self.publish_date and not self.test_mode:
-                await self.set_schedule_time(page, self.publish_date)
+            await self.prepare_post_settings(page)
 
             if self.test_mode:
                 await self.click_discard(page)

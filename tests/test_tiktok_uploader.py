@@ -433,6 +433,66 @@ class TiktokUploaderTests(unittest.TestCase):
             ],
         )
 
+    def test_aigc_confirmation_handles_multiple_dialogs_in_sequence(self):
+        video = TiktokVideo(
+            "标题",
+            "demo.mp4",
+            [],
+            0,
+            "cookie.json",
+            is_aigc=True,
+        )
+        video.confirm_aigc_dialog = AsyncMock(
+            side_effect=[True, True, False]
+        )
+
+        result = asyncio.run(video.confirm_aigc_dialogs())
+
+        self.assertEqual(result, 2)
+        self.assertEqual(
+            video.confirm_aigc_dialog.await_args_list,
+            [
+                call(timeout=5_000),
+                call(timeout=2_000),
+                call(timeout=2_000),
+            ],
+        )
+
+    def test_product_link_is_added_before_aigc_setting(self):
+        publish_date = datetime(2026, 7, 26, 18, 0)
+        video = TiktokVideo(
+            "标题",
+            "demo.mp4",
+            [],
+            publish_date,
+            "cookie.json",
+            thumbnail_path="cover.png",
+            is_aigc=True,
+            product_link="1732510820131049700",
+        )
+        video.upload_thumbnails = AsyncMock()
+        video.add_product_link = AsyncMock()
+        video.set_aigc_content = AsyncMock()
+        video.set_schedule_time = AsyncMock()
+        calls = MagicMock()
+        calls.attach_mock(video.upload_thumbnails, "cover")
+        calls.attach_mock(video.add_product_link, "product")
+        calls.attach_mock(video.set_aigc_content, "aigc")
+        calls.attach_mock(video.set_schedule_time, "schedule")
+        page = MagicMock()
+
+        asyncio.run(video.prepare_post_settings(page))
+
+        self.assertEqual(
+            calls.mock_calls,
+            [
+                call.cover(page),
+                call.product(),
+                call.aigc(),
+                call.schedule(page, publish_date),
+            ],
+        )
+
     def test_publish_uses_stable_data_e2e_button(self):
         video = TiktokVideo("标题", "demo.mp4", [], 0, "cookie.json")
         button = MagicMock()
