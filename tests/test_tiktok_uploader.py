@@ -487,11 +487,40 @@ class TiktokUploaderTests(unittest.TestCase):
             calls.mock_calls,
             [
                 call.cover(page),
-                call.product(),
+                call.product(page),
                 call.aigc(),
                 call.schedule(page, publish_date),
             ],
         )
+
+    def test_product_dialog_can_be_found_in_page_outside_upload_scope(self):
+        video = TiktokVideo("标题", "demo.mp4", [], 0, "cookie.json")
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        missing_query = MagicMock()
+        missing_query.last = missing
+        video.locator_base = MagicMock()
+        video.locator_base.locator.return_value = missing_query
+
+        dialog = MagicMock()
+        dialog.count = AsyncMock(return_value=1)
+        dialog.is_visible = AsyncMock(return_value=True)
+        dialog_query = MagicMock()
+        dialog_query.last = dialog
+        page = MagicMock()
+        page.locator.return_value = dialog_query
+        page.frames = []
+
+        result = asyncio.run(
+            video._wait_for_visible_locator(
+                ADD_LINK_DIALOG,
+                page,
+                timeout=100,
+            )
+        )
+
+        self.assertIs(result, dialog)
+        page.locator.assert_called_once_with(ADD_LINK_DIALOG)
 
     def test_publish_uses_stable_data_e2e_button(self):
         video = TiktokVideo("标题", "demo.mp4", [], 0, "cookie.json")
@@ -576,6 +605,8 @@ class TiktokUploaderTests(unittest.TestCase):
         first_next_query = MagicMock()
         first_next_query.first = first_next
         add_dialog = MagicMock()
+        add_dialog.count = AsyncMock(return_value=1)
+        add_dialog.is_visible = AsyncMock(return_value=True)
         add_dialog.wait_for = AsyncMock()
         add_dialog.get_by_role.side_effect = (
             lambda role, **kwargs: link_type_query
@@ -610,6 +641,8 @@ class TiktokUploaderTests(unittest.TestCase):
         rows = MagicMock()
         rows.filter.return_value = matching_rows
         selector_dialog = MagicMock()
+        selector_dialog.count = AsyncMock(return_value=1)
+        selector_dialog.is_visible = AsyncMock(return_value=True)
         selector_dialog.wait_for = AsyncMock()
 
         def selector_role(role, **kwargs):
@@ -634,6 +667,8 @@ class TiktokUploaderTests(unittest.TestCase):
         confirm_query = MagicMock()
         confirm_query.first = confirm
         name_dialog = MagicMock()
+        name_dialog.count = AsyncMock(return_value=1)
+        name_dialog.is_visible = AsyncMock(return_value=True)
         name_dialog.wait_for = AsyncMock()
         name_dialog.get_by_label.return_value = name_input_query
         name_dialog.get_by_role.return_value = confirm_query
