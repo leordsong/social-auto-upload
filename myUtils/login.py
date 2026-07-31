@@ -1,7 +1,12 @@
 import asyncio
+import base64
+import re
 import sqlite3
 
-from playwright.async_api import async_playwright
+try:
+    from patchright.async_api import async_playwright
+except ImportError:
+    from playwright.async_api import async_playwright
 
 from myUtils.auth import check_cookie
 from utils.base_social_media import set_init_script
@@ -9,6 +14,44 @@ from utils.runtime_config import get_login_browser_headless
 import uuid
 from pathlib import Path
 from conf import BASE_DIR, LOCAL_CHROME_PATH
+from uploader.tk_uploader.main_chrome import TIKTOK_UPLOAD_URL, capture_ready_tiktok_qr
+
+DOUYIN_VERIFICATION_PHONE_SELECTORS = (
+    '#uc-second-verify [class*="highlight_text"]',
+    '#uc-second-verify [class*="highlight"]',
+    '#uc-second-verify [class*="bold"]',
+    '#uc-second-verify',
+    '[class*="uc_verification_component_typography"]',
+)
+MASKED_PHONE_PATTERN = re.compile(
+    r"(?<!\d)(?:\+?86[\s-]*)?(1\d{2}[*＊•·xX]{4,8}\d{2,4})(?!\d)"
+)
+
+
+def parse_douyin_verification_phone(text):
+    """从中英文短信提示中提取抖音展示的脱敏手机号。"""
+    match = MASKED_PHONE_PATTERN.search(text or "")
+    return match.group(1) if match else None
+
+
+async def extract_douyin_verification_phone(page, attempts=20, delay=0.25):
+    """等待验证码提示出现，并使用稳定的 class 片段提取脱敏手机号。"""
+    for attempt in range(attempts):
+        for selector in DOUYIN_VERIFICATION_PHONE_SELECTORS:
+            try:
+                locator = page.locator(selector).first
+                if not await locator.count():
+                    continue
+                text = await locator.inner_text()
+                phone = parse_douyin_verification_phone(text)
+                if phone:
+                    return phone
+            except Exception:
+                continue
+        if attempt < attempts - 1:
+            await asyncio.sleep(delay)
+    return None
+
 
 # 统一获取浏览器启动配置（防风控+引入本地浏览器）
 def get_browser_options(douyin=False):
@@ -110,6 +153,13 @@ async def douyin_cookie_gen(id, status_queue, account_id=None, existing_file_pat
                 await sms_button.click()
                 print("✅ 已点击接收短信验证码按钮")
                 status_queue.put("NEED_VERIFICATION")
+
+                masked_phone = await extract_douyin_verification_phone(page)
+                if masked_phone:
+                    print(f"✅ 验证码已发送至: {masked_phone}")
+                    status_queue.put(f"VERIFICATION_PHONE:{masked_phone}")
+                else:
+                    print("⚠️ 已进入验证码流程，但未提取到脱敏手机号")
             
             # 开始循环处理验证码输入和验证
             max_retry = 5  # 最多重试5次
@@ -530,39 +580,53 @@ async def baijiahao_cookie_gen(id, status_queue, account_id=None, existing_file_
 
 
 async def tiktok_cookie_gen(id, status_queue, account_id=None, existing_file_path=None):
-    """TikTok登录（复用抖音登录逻辑）"""
-    url_changed_event = asyncio.Event()
-
-    async def on_url_change():
-        if page.url != original_url:
-            url_changed_event.set()
-
+    """打开 TikTok 扫码登录，并保存为当前系统的 type-6 账号。"""
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(**get_browser_options())
+        options = get_browser_options()
+        # 登录必须保持可见；上传任务是否无头不影响这里。
+        options["headless"] = False
+        browser = await playwright.chromium.launch(**options)
         context = await browser.new_context()
         context = await set_init_script(context)
         page = await context.new_page()
-        page.on("framenavigated", lambda frame: asyncio.create_task(on_url_change()))
+        await page.goto(TIKTOK_UPLOAD_URL, wait_until="domcontentloaded", timeout=60_000)
 
-        original_url = "https://www.tiktok.com/"
-        await page.goto(original_url)
-        status_queue.put("200")
+        qr_sent = False
+        authenticated = False
+        for _ in range(200):
+            if await page.locator(
+                'input[type="file"][accept*="video"], [data-e2e="select_video_container"]'
+            ).count():
+                authenticated = True
+                break
 
-        try:
-            await asyncio.wait_for(url_changed_event.wait(), timeout=300)
-            print("监听页面跳转成功")
-        except asyncio.TimeoutError:
+            if not qr_sent:
+                qr_tab = page.get_by_text(
+                    re.compile(r"(使用二维码|二维码登录|Use QR code|Log in with QR)", re.I)
+                ).first
+                if await qr_tab.count() and await qr_tab.is_visible():
+                    await qr_tab.click()
+                    await page.wait_for_timeout(500)
+
+                png = await capture_ready_tiktok_qr(page)
+                if png:
+                    status_queue.put(
+                        f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}"
+                    )
+                    qr_sent = True
+
+            if "/login" not in page.url and "/tiktokstudio/upload" not in page.url:
+                await page.goto(TIKTOK_UPLOAD_URL, wait_until="domcontentloaded")
+            await asyncio.sleep(1)
+
+        if not authenticated:
             status_queue.put("500")
-            print("监听页面跳转超时")
-            await page.close()
             await context.close()
             await browser.close()
             return None
 
         cookie_path, file_name = resolve_cookie_target(existing_file_path)
         await context.storage_state(path=cookie_path)
-
-        await page.close()
         await context.close()
         await browser.close()
 

@@ -257,6 +257,9 @@ class DouYinBaseUploader(BaseVideoUploader):
             raise RuntimeError(f"cookie文件不存在，请先完成抖音登录: {self.account_file}")
         if not await cookie_auth(self.account_file):
             raise RuntimeError(f"cookie文件已失效，请先完成抖音登录: {self.account_file}")
+        if getattr(self, "test_mode", False):
+            self.publish_strategy = DOUYIN_PUBLISH_STRATEGY_IMMEDIATE
+            self.publish_date = 0
         if self.publish_strategy not in {DOUYIN_PUBLISH_STRATEGY_IMMEDIATE, DOUYIN_PUBLISH_STRATEGY_SCHEDULED}:
             raise ValueError(f"不支持的发布策略: {self.publish_strategy}")
 
@@ -507,6 +510,7 @@ class DouYinVideo(DouYinBaseUploader):
         headless: bool | None = None,
         collection: str | None = None,  # 合集名称
         screenshot_manager: ScreenshotManager | None = None,  # 截图管理器（异常诊断）
+        test_mode: bool = False,
     ):
         super().__init__(
             publish_date=publish_date,
@@ -527,11 +531,44 @@ class DouYinVideo(DouYinBaseUploader):
         self.category = category
         self.collection = collection  # 合集名称
         self.screenshot_manager = screenshot_manager  # 截图管理器
+        self.test_mode = bool(test_mode)
 
     async def _take_error_screenshot(self, page: Page, error_msg: str = None) -> None:
         """辅助方法：错误时截图"""
         if self.screenshot_manager:
             await self.screenshot_manager.take_error_screenshot(page, error_msg)
+
+    async def save_test_draft(self, page: Page) -> None:
+        """测试模式下暂存作品并离开，不触发正式发布。"""
+        async def accept_native_dialog(dialog):
+            await dialog.accept()
+
+        page.once("dialog", accept_native_dialog)
+        selectors = [
+            'button:has-text("暂存离开")',
+            'button:has-text("Save and exit")',
+            'button:has-text("Save draft")',
+        ]
+        for selector in selectors:
+            button = page.locator(selector).first
+            if await button.count() and await button.is_visible():
+                douyin_logger.info(_msg("🧪", "测试模式：点击暂存离开"))
+                await button.click()
+                await page.wait_for_timeout(500)
+
+                dialog = page.locator('[role="dialog"]:visible').last
+                if await dialog.count():
+                    confirm = dialog.locator(
+                        'button:has-text("暂存离开"), button:has-text("确认"), '
+                        'button:has-text("Save and exit"), button:has-text("Confirm")'
+                    ).last
+                    if await confirm.count() and await confirm.is_visible():
+                        await confirm.click()
+
+                await page.wait_for_timeout(1000)
+                douyin_logger.success(_msg("🥳", "测试完成，作品已暂存"))
+                return
+        raise RuntimeError("测试模式未找到“暂存离开/Save and exit”按钮")
 
     async def validate_upload_args(self):
         await self.validate_base_args()
@@ -1110,6 +1147,12 @@ class DouYinVideo(DouYinBaseUploader):
 
             if self.publish_strategy == DOUYIN_PUBLISH_STRATEGY_SCHEDULED and self.publish_date != 0:
                 await self.set_schedule_time_douyin(page, self.publish_date)
+
+            if self.test_mode:
+                await self.save_test_draft(page)
+                await context.storage_state(path=self.account_file)
+                douyin_logger.success(_msg("🥳", "cookie 更新完毕"))
+                return
 
             douyin_logger.info(_msg("🚀", "小人正在点击发布按钮"))
             max_retries = 3  # 最大重试次数

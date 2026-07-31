@@ -294,7 +294,7 @@
           </div>
         </el-tab-pane>
         
-        <el-tab-pane label="小红书" name="xiaohongshu">
+        <el-tab-pane v-if="SHOW_XIAOHONGSHU" label="小红书" name="xiaohongshu">
           <div class="account-list-container">
             <div class="account-search">
               <el-input
@@ -510,7 +510,7 @@
           </div>
         </el-tab-pane>
         
-        <el-tab-pane label="百家号" name="baijiahao">
+        <el-tab-pane v-if="SHOW_BAIJIAHAO" label="百家号" name="baijiahao">
           <div class="account-list-container">
             <div class="account-search">
               <el-input
@@ -604,10 +604,10 @@
             <el-option label="快手" value="快手" />
             <el-option label="抖音" value="抖音" />
             <el-option label="视频号" value="视频号" />
-            <el-option label="小红书" value="小红书" />
+            <el-option v-if="SHOW_XIAOHONGSHU" label="小红书" value="小红书" />
             <el-option label="B站" value="B站" />
             <el-option label="TikTok" value="TikTok" />
-            <el-option label="百家号" value="百家号" />
+            <el-option v-if="SHOW_BAIJIAHAO" label="百家号" value="百家号" />
           </el-select>
         </el-form-item>
         <el-form-item label="名称" prop="name">
@@ -626,6 +626,9 @@
           </div>
           <div v-else-if="needVerification && accountForm.platform === '抖音'" class="verification-wrapper">
             <p class="verification-tip">需要短信验证码，请输入收到的验证码</p>
+            <p v-if="verificationPhone" class="verification-phone">
+              短信已发送至 <strong>{{ verificationPhone }}</strong>
+            </p>
             <el-input 
               v-model="verificationCode" 
               placeholder="请输入验证码" 
@@ -681,6 +684,7 @@ import { accountApi } from '@/api/account'
 import { useAccountStore } from '@/stores/account'
 import { useAppStore } from '@/stores/app'
 import { http } from '@/utils/request'
+import { SHOW_XIAOHONGSHU, SHOW_BAIJIAHAO, isPlatformVisible } from '@/config/features'
 
 // 获取账号状态管理
 const accountStore = useAccountStore()
@@ -776,7 +780,7 @@ const getPlatformTagType = (platform) => {
     '视频号': 'warning',
     '小红书': 'info',
     'B站': 'primary',
-    'TikTok': '',
+    'TikTok': 'primary',
     '百家号': 'success'
   }
   return typeMap[platform] || 'info'
@@ -808,10 +812,9 @@ const handleStatusClick = (row) => {
 
 // 过滤后的账号列表
 const filteredAccounts = computed(() => {
-  if (!searchKeyword.value) return accountStore.accounts
-  return accountStore.accounts.filter(account =>
-    account.name.includes(searchKeyword.value)
-  )
+  const visibleAccounts = accountStore.accounts.filter(account => isPlatformVisible(account.platform))
+  if (!searchKeyword.value) return visibleAccounts
+  return visibleAccounts.filter(account => account.name.includes(searchKeyword.value))
 })
 
 // 按平台过滤的账号列表
@@ -880,6 +883,7 @@ const loginStatus = ref('')
 // 验证码相关状态
 const needVerification = ref(false)
 const verificationCode = ref('')
+const verificationPhone = ref('')
 const submittingVerification = ref(false)
 
 // 添加账号
@@ -897,6 +901,7 @@ const handleAddAccount = () => {
   loginStatus.value = ''
   needVerification.value = false
   verificationCode.value = ''
+  verificationPhone.value = ''
   submittingVerification.value = false
   dialogVisible.value = true
 }
@@ -1035,6 +1040,7 @@ const handleReLogin = (row) => {
   loginStatus.value = ''
   needVerification.value = false
   verificationCode.value = ''
+  verificationPhone.value = ''
   submittingVerification.value = false
 
   // 显示对话框
@@ -1072,6 +1078,9 @@ const connectSSE = (platform, name, accountId = null) => {
   sseConnecting.value = true
   qrCodeData.value = ''
   loginStatus.value = ''
+  needVerification.value = false
+  verificationCode.value = ''
+  verificationPhone.value = ''
 
   // 获取平台类型编号
   const platformTypeMap = {
@@ -1120,6 +1129,9 @@ const connectSSE = (platform, name, accountId = null) => {
         sseConnecting.value = false
         qrCodeData.value = ''
         loginStatus.value = ''
+        needVerification.value = false
+        verificationCode.value = ''
+        verificationPhone.value = ''
       }, 2000)
       return
     }
@@ -1130,6 +1142,13 @@ const connectSSE = (platform, name, accountId = null) => {
       if (data === 'NEED_VERIFICATION') {
         needVerification.value = true
         verificationCode.value = ''
+        verificationPhone.value = ''
+        return
+      }
+
+      if (data.startsWith('VERIFICATION_PHONE:')) {
+        verificationPhone.value = data.substring('VERIFICATION_PHONE:'.length)
+        needVerification.value = true
         return
       }
 
@@ -1169,6 +1188,7 @@ const connectSSE = (platform, name, accountId = null) => {
             sseConnecting.value = false
             needVerification.value = false
             verificationCode.value = ''
+            verificationPhone.value = ''
 
             // 根据是否是重新登录显示不同提示
             ElMessage.success(dialogType.value === 'relogin' ? '重新登录成功' : '账号添加成功')
@@ -1199,6 +1219,7 @@ const connectSSE = (platform, name, accountId = null) => {
           loginStatus.value = ''
           needVerification.value = false
           verificationCode.value = ''
+          verificationPhone.value = ''
         }, 2000)
       }
     }
@@ -1210,6 +1231,9 @@ const connectSSE = (platform, name, accountId = null) => {
     ElMessage.error('连接服务器失败，请稍后再试')
     closeSSEConnection()
     sseConnecting.value = false
+    needVerification.value = false
+    verificationCode.value = ''
+    verificationPhone.value = ''
   }
 }
 
@@ -1442,6 +1466,16 @@ onBeforeUnmount(() => {
       .verification-tip {
         margin-bottom: 15px;
         color: #606266;
+      }
+
+      .verification-phone {
+        margin: -5px 0 15px;
+        color: #909399;
+
+        strong {
+          color: #303133;
+          font-size: 18px;
+        }
       }
       
       .verification-input {

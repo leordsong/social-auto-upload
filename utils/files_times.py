@@ -1,3 +1,4 @@
+import re
 from datetime import timedelta
 
 from datetime import datetime
@@ -71,8 +72,20 @@ def generate_schedule_time_next_day(total_videos, videos_per_day = 1, daily_time
         daily_video_index = video % videos_per_day
 
         # Calculate the time for the current video
-        hour = daily_times[daily_video_index]
-        time_offset = timedelta(days=day, hours=hour - current_time.hour, minutes=-current_time.minute,
+        daily_time = daily_times[daily_video_index]
+        if isinstance(daily_time, str):
+            match = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", daily_time)
+            if not match:
+                raise ValueError(
+                    f"daily_times should contain hours or HH:MM strings, got {daily_time!r}"
+                )
+            hour, minute = map(int, match.groups())
+        else:
+            hour, minute = int(daily_time), 0
+        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+            raise ValueError(f"invalid daily publish time: {daily_time!r}")
+
+        time_offset = timedelta(days=day, hours=hour - current_time.hour, minutes=minute-current_time.minute,
                                 seconds=-current_time.second, microseconds=-current_time.microsecond)
         timestamp = current_time + time_offset
 

@@ -7,6 +7,9 @@ import time
 import uuid
 from pathlib import Path
 from queue import Queue
+import shutil
+from urllib.parse import urlparse
+from urllib.request import urlopen
 from flask_cors import CORS
 from playwright.async_api import async_playwright
 from myUtils.auth import check_cookie
@@ -71,6 +74,57 @@ def parse_db_datetime(value):
         except ValueError:
             continue
     return None
+
+
+def is_public_url(value):
+    if not isinstance(value, str):
+        return False
+    parsed = urlparse(value.strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def prepare_upload_file_list(file_list):
+    video_dir = Path(BASE_DIR / "videoFile")
+    video_dir.mkdir(parents=True, exist_ok=True)
+
+    prepared_files = []
+    temp_files = []
+
+    try:
+        for file_item in file_list:
+            if is_public_url(file_item):
+                parsed = urlparse(file_item.strip())
+                suffix = Path(parsed.path).suffix or ".mp4"
+                temp_name = f"temp_{uuid.uuid4().hex}{suffix}"
+                temp_path = video_dir / temp_name
+
+                with urlopen(file_item) as response, open(temp_path, "wb") as target_file:
+                    shutil.copyfileobj(response, target_file)
+
+                print(f"✅ 已缓存公网视频: {file_item} -> {temp_name}")
+                prepared_files.append(temp_name)
+                temp_files.append(temp_path)
+            else:
+                prepared_files.append(file_item)
+
+        return prepared_files, temp_files
+    except Exception:
+        for temp_path in temp_files:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        raise
+
+
+def cleanup_temp_upload_files(temp_files):
+    for temp_path in temp_files:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            print(f"⚠️ 删除临时视频文件失败: {temp_path}, {e}")
 
 
 active_queues = {}
@@ -684,8 +738,11 @@ def postVideo():
     productLink = data.get('productLink', '')
     productTitle = data.get('productTitle', '')
     desc = data.get('desc', '')
+    description = data.get('description', desc)
     thumbnail_portrait = data.get('thumbnailPortrait', '')
     is_draft = data.get('isDraft', False)  # 新增参数：是否保存为草稿
+    test_mode = bool(data.get('testMode', False))
+    is_aigc = data.get('isAigc', True)
     tencent_declare_original = data.get('tencentDeclareOriginal', data.get('declareOriginal', False))
     tencent_declaration = data.get('tencentDeclaration')
 
@@ -723,6 +780,9 @@ def postVideo():
             pass
         else:
             return jsonify({"code": 400, "msg": "标题不能为空", "data": None}), 400
+    if test_mode and type not in {2, 3, 4, 5, 6}:
+        message = "小红书暂不支持测试模式" if type == 1 else "当前平台暂不支持测试模式"
+        return jsonify({"code": 400, "msg": message, "data": None}), 400
 
     # 打印获取到的数据（仅作为示例）
     print("File List:", file_list)
@@ -733,7 +793,10 @@ def postVideo():
     # 封面参数（B站使用单封面）- 复用 thumbnail 字段
     bilibili_cover = thumbnail_path  # B站封面路径
 
+    cached_temp_files = []
+
     try:
+        file_list, cached_temp_files = prepare_upload_file_list(file_list)
         match type:
             case 1:
                 declare_original = data.get('declareOriginal', False)
@@ -745,24 +808,29 @@ def postVideo():
             case 2:
                 post_video_tencent(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
                                    start_days, is_draft, thumbnail_path, desc, collection=collection,
-                                   declare_original=tencent_declare_original, declaration=tencent_declaration)
+                                   declare_original=tencent_declare_original, declaration=tencent_declaration,
+                                   test_mode=test_mode)
             case 3:
                 post_video_DouYin(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
                           start_days, thumbnail_path, thumbnail_portrait, productLink, productTitle, declaration_info, desc,
-                          collection=collection)
+                          collection=collection, test_mode=test_mode)
             case 4:
                 post_video_ks(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
                           start_days, desc, thumbnail_path, kuaishou_declaration, allow_duet, allow_download, show_in_city,
-                          collection=collection)
+                          collection=collection, test_mode=test_mode)
             case 5:
                 post_video_bilibili(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
                           start_days, tid=bilibili_tid, desc=desc,
                           copyright_type=1 if bilibili_is_original else 2,
                           cover_path=bilibili_cover, collection=collection,
-                          ai_declaration=bilibili_ai_declaration)
+                          ai_declaration=bilibili_ai_declaration, test_mode=test_mode)
             case 6:
-                post_video_tiktok(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days)
+                post_video_tiktok(
+                    title, file_list, tags, account_list, category, enableTimer,
+                    videos_per_day, daily_times, start_days, thumbnail_path,
+                    description, is_aigc, productLink, productTitle,
+                    test_mode=test_mode
+                )
             case 7:
                 post_video_baijiahao(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
                           start_days)
@@ -773,7 +841,7 @@ def postVideo():
         return jsonify(
             {
                 "code": 200,
-                "msg": "发布任务已提交",
+                "msg": "测试任务已提交" if test_mode else "发布任务已提交",
                 "data": None
             }), 200
     except Exception as e:
@@ -783,6 +851,8 @@ def postVideo():
             "msg": f"发布失败: {str(e)}",
             "data": None
         }), 500
+    finally:
+        cleanup_temp_upload_files(cached_temp_files)
 
 
 @app.route('/updateUserinfo', methods=['POST'])
@@ -842,7 +912,10 @@ def postVideoBatch():
         productLink = data.get('productLink', '')
         productTitle = data.get('productTitle', '')
         desc = data.get('desc', '')
+        description = data.get('description', desc)
         is_draft = data.get('isDraft', False)
+        test_mode = bool(data.get('testMode', False))
+        is_aigc = data.get('isAigc', True)
         tencent_declare_original = data.get('tencentDeclareOriginal', data.get('declareOriginal', False))
         tencent_declaration = data.get('tencentDeclaration')
         declaration_info = data.get('declaration_info', None)# 新增参数：添加声明
@@ -872,38 +945,54 @@ def postVideoBatch():
 
         collection = data.get('collection', None)  # 合集名称
 
-        match type:
-            case 1:
-                declare_original = data.get('declareOriginal', False)
-                xhs_category = category if category else (1 if declare_original else None)
-                xhs_declaration_info = {"declaration_type": xiaohongshu_declaration} if xiaohongshu_declaration else None
-                print(f"[小红书] declareOriginal={declare_original}, xhs_category={xhs_category}, xiaohongshu_declaration={xiaohongshu_declaration}, declaration_info={xhs_declaration_info}")
-                post_video_xhs(title, file_list, tags, account_list, xhs_category, enableTimer, videos_per_day, daily_times,
-                               start_days, desc, thumbnail_path, collection=collection, declaration_info=xhs_declaration_info)
-            case 2:
-                post_video_tencent(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                                   start_days, is_draft, thumbnail_path, desc, collection=collection,
-                                   declare_original=tencent_declare_original, declaration=tencent_declaration)
-            case 3:
-                post_video_DouYin(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days, thumbnail_path, thumbnail_portrait, productLink, productTitle, declaration_info, desc,
-                          collection=collection)
-            case 4:
-                post_video_ks(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days, desc, thumbnail_path, kuaishou_declaration, allow_duet, allow_download, show_in_city,
-                          collection=collection)
-            case 5:
-                post_video_bilibili(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days, tid=bilibili_tid, desc=desc,
-                          copyright_type=1 if bilibili_is_original else 2,
-                          cover_path=bilibili_cover, collection=collection,
-                          ai_declaration=bilibili_ai_declaration)
-            case 6:
-                post_video_tiktok(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days)
-            case 7:
-                post_video_baijiahao(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
-                          start_days)
+        cached_temp_files = []
+
+        try:
+            file_list, cached_temp_files = prepare_upload_file_list(file_list)
+
+            if test_mode and type not in {2, 3, 4, 5, 6}:
+                message = "小红书暂不支持测试模式" if type == 1 else "当前平台暂不支持测试模式"
+                return jsonify({"code": 400, "msg": message, "data": None}), 400
+
+            match type:
+                case 1:
+                    declare_original = data.get('declareOriginal', False)
+                    xhs_category = category if category else (1 if declare_original else None)
+                    xhs_declaration_info = {"declaration_type": xiaohongshu_declaration} if xiaohongshu_declaration else None
+                    print(f"[小红书] declareOriginal={declare_original}, xhs_category={xhs_category}, xiaohongshu_declaration={xiaohongshu_declaration}, declaration_info={xhs_declaration_info}")
+                    post_video_xhs(title, file_list, tags, account_list, xhs_category, enableTimer, videos_per_day, daily_times,
+                                   start_days, desc, thumbnail_path, collection=collection, declaration_info=xhs_declaration_info)
+                case 2:
+                    post_video_tencent(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
+                                       start_days, is_draft, thumbnail_path, desc, collection=collection,
+                                       declare_original=tencent_declare_original, declaration=tencent_declaration,
+                                       test_mode=test_mode)
+                case 3:
+                    post_video_DouYin(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
+                              start_days, thumbnail_path, thumbnail_portrait, productLink, productTitle, declaration_info, desc,
+                              collection=collection, test_mode=test_mode)
+                case 4:
+                    post_video_ks(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
+                              start_days, desc, thumbnail_path, kuaishou_declaration, allow_duet, allow_download, show_in_city,
+                              collection=collection, test_mode=test_mode)
+                case 5:
+                    post_video_bilibili(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
+                              start_days, tid=bilibili_tid, desc=desc,
+                              copyright_type=1 if bilibili_is_original else 2,
+                              cover_path=bilibili_cover, collection=collection,
+                              ai_declaration=bilibili_ai_declaration, test_mode=test_mode)
+                case 6:
+                    post_video_tiktok(
+                        title, file_list, tags, account_list, category, enableTimer,
+                        videos_per_day, daily_times, start_days, thumbnail_path,
+                        description, is_aigc, productLink, productTitle,
+                        test_mode=test_mode
+                    )
+                case 7:
+                    post_video_baijiahao(title, file_list, tags, account_list, category, enableTimer, videos_per_day, daily_times,
+                              start_days)
+        finally:
+            cleanup_temp_upload_files(cached_temp_files)
     # 返回响应给客户端
     return jsonify(
         {
@@ -938,7 +1027,7 @@ def batchUnifiedPublish():
             douyin: { tags: [], collection, productTitle, productLink, declaration_type },
             kuaishou: { tags: [], declaration },
             bilibili: { tags: [], tid, aiDeclaration, isOriginal },
-            tiktok: { tags: [] },
+            tiktok: { tags: [], isAigc, productLink, productTitle },
             baijiahao: { tags: [] }
         }
     }
@@ -972,6 +1061,7 @@ def batchUnifiedPublish():
         platforms = data.get('platforms', [])  # 平台ID列表
         accounts = data.get('accounts', {})   # 各平台账号
         config = data.get('config', {})       # 各平台差异化配置
+        test_mode = bool(data.get('testMode', False))
 
         if not files:
             return jsonify({
@@ -991,6 +1081,12 @@ def batchUnifiedPublish():
             return jsonify({
                 "code": 400,
                 "msg": "请选择至少一个平台",
+                "data": None
+            }), 400
+        if test_mode and any(int(platform_id) not in {2, 3, 4, 5, 6} for platform_id in platforms):
+            return jsonify({
+                "code": 400,
+                "msg": "测试模式仅支持抖音、TikTok、B站、视频号和快手；小红书暂不支持",
                 "data": None
             }), 400
         
@@ -1039,16 +1135,18 @@ def batchUnifiedPublish():
                     tags=[],  # 已废弃，标签从config中读取
                     accounts=account_file_paths,
                     desc=desc,
-                    config=config
+                    config=config,
+                    test_mode=test_mode
                 )
                 
                 # 发布成功
+                success_message = get_test_mode_result(platform_id) if test_mode else "发布成功"
                 results.append({
                     "platform": platform_name,
                     "status": "success",
-                    "message": "发布成功"
+                    "message": success_message
                 })
-                print(f"[统一发布] ✅ {platform_name} 发布成功\n")
+                print(f"[统一发布] ✅ {platform_name} {success_message}\n")
                 
             except Exception as e:
                 error_msg = str(e)
@@ -1070,7 +1168,7 @@ def batchUnifiedPublish():
         
         return jsonify({
             "code": 200,
-            "msg": f"发布完成：{success_count} 成功，{fail_count} 失败",
+            "msg": f"{'测试' if test_mode else '发布'}完成：{success_count} 成功，{fail_count} 失败",
             "data": {
                 "results": results,
                 "summary": {
@@ -1123,6 +1221,18 @@ def get_platform_name(platform_id):
     return platform_map.get(platform_id, f"未知平台({platform_id})")
 
 
+def get_test_mode_result(platform_id):
+    """返回测试模式下各平台执行的最终动作。"""
+    action_map = {
+        2: "测试完成：已保存草稿",
+        3: "测试完成：已暂存离开",
+        4: "测试完成：已取消",
+        5: "测试完成：已存草稿",
+        6: "测试完成：已放弃",
+    }
+    return action_map.get(int(platform_id), "测试完成")
+
+
 def get_cover_for_platform(platform_id, cover_portrait=None, cover_square=None):
     """
     根据平台ID获取对应的封面路径
@@ -1164,7 +1274,7 @@ def get_cover_for_platform(platform_id, cover_portrait=None, cover_square=None):
     return main_cover
 
 
-def publish_to_platform(platform_id, title, files, coverPath, tags, accounts, desc, config):
+def publish_to_platform(platform_id, title, files, coverPath, tags, accounts, desc, config, test_mode=False):
     """
     根据平台ID发布视频（核心分发逻辑）
 
@@ -1190,6 +1300,9 @@ def publish_to_platform(platform_id, title, files, coverPath, tags, accounts, de
     kuaishou_config = config.get('kuaishou', {})
     tiktok_config = config.get('tiktok', {})
     baijiahao_config = config.get('baijiahao', {})
+
+    if test_mode and platform_id not in {2, 3, 4, 5, 6}:
+        raise ValueError("该平台暂不支持测试模式")
 
     match platform_id:
         case 1:  # 小红书
@@ -1236,7 +1349,8 @@ def publish_to_platform(platform_id, title, files, coverPath, tags, accounts, de
                 desc=desc,
                 collection=collection,
                 declare_original=is_original,
-                declaration=declaration
+                declaration=declaration,
+                test_mode=test_mode
             )
 
         case 3:  # 抖音
@@ -1268,7 +1382,8 @@ def publish_to_platform(platform_id, title, files, coverPath, tags, accounts, de
                 productTitle=douyin_config.get('productTitle', ''),
                 declaration_info=declaration_info,
                 desc=desc,
-                collection=collection
+                collection=collection,
+                test_mode=test_mode
             )
 
         case 4:  # 快手
@@ -1291,7 +1406,8 @@ def publish_to_platform(platform_id, title, files, coverPath, tags, accounts, de
                 allow_duet=True,
                 allow_download=True,
                 show_in_city=True,
-                collection=collection
+                collection=collection,
+                test_mode=test_mode
             )
             
         case 5:  # B站
@@ -1321,7 +1437,8 @@ def publish_to_platform(platform_id, title, files, coverPath, tags, accounts, de
                 copyright_type=1 if bilibili_orig else 2,
                 cover_path=bilibili_cover,
                 collection=collection,
-                ai_declaration=bilibili_ai_decl
+                ai_declaration=bilibili_ai_decl,
+                test_mode=test_mode
             )
             
         case 6:  # TikTok
@@ -1336,7 +1453,13 @@ def publish_to_platform(platform_id, title, files, coverPath, tags, accounts, de
                 enableTimer=False,
                 videos_per_day=1,
                 daily_times=[10],
-                start_days=0
+                start_days=0,
+                thumbnail_path=coverPath.get('square', '') if isinstance(coverPath, dict) else coverPath,
+                description=desc,
+                is_aigc=tiktok_config.get('isAigc', True),
+                productLink=tiktok_config.get('productLink', ''),
+                productTitle=tiktok_config.get('productTitle', ''),
+                test_mode=test_mode,
             )
             
         case 7:  # 百家号

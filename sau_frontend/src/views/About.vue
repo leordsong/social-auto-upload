@@ -22,10 +22,10 @@
           <el-tag type="danger">抖音</el-tag>
           <el-tag type="success">快手</el-tag>
           <el-tag type="warning">视频号</el-tag>
-          <el-tag type="info">小红书</el-tag>
+          <el-tag v-if="SHOW_XIAOHONGSHU" type="info">小红书</el-tag>
           <el-tag type="primary">B站</el-tag>
-          <el-tag>TikTok</el-tag>
-          <el-tag type="success">百家号</el-tag>
+          <el-tag type="primary">TikTok</el-tag>
+          <el-tag v-if="SHOW_BAIJIAHAO" type="success">百家号</el-tag>
         </div>
       </div>
 
@@ -56,6 +56,7 @@
 </template>
 
 <script setup>
+import { SHOW_XIAOHONGSHU, SHOW_BAIJIAHAO } from '@/config/features'
 // 关于页面组件
 </script>
 
